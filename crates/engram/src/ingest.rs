@@ -50,6 +50,24 @@ pub fn estimate_tokens(s: &str) -> usize {
     cjk + other.div_ceil(4)
 }
 
+/// Minimum lines already buffered before a definition-start line triggers a symbol-boundary
+/// flush. Prevents over-fragmenting runs of tiny one-line declarations.
+const MIN_SYMBOL_SPLIT_LINES: usize = 4;
+
+/// True if a line begins a code definition (fn/class/struct/enum/interface/trait/type/func),
+/// allowing optional `export`/`pub`/`default`/`async` modifiers. Single-line check reusing the
+/// same keyword set as `extract_code_entities`.
+fn starts_definition(line: &str) -> bool {
+    static DEF1: OnceLock<Regex> = OnceLock::new();
+    DEF1.get_or_init(|| {
+        Regex::new(
+            r"^\s*(?:export\s+)?(?:pub\s+)?(?:default\s+)?(?:async\s+)?(?:fn|def|class|struct|enum|interface|trait|type|func)\s+[A-Za-z_]",
+        )
+        .unwrap()
+    })
+    .is_match(line)
+}
+
 /// Code-aware chunking: pack consecutive lines up to a char cap and a token budget, never
 /// splitting a line unless a single CJK-heavy line itself exceeds the token budget.
 /// Returns `(chunk_text, start_line, end_line)` with 1-based inclusive line numbers.
@@ -66,6 +84,13 @@ pub fn estimate_tokens(s: &str) -> usize {
 ///     (preserving prior behavior — the char cap dominates for ASCII content since
 ///     1500 chars ≈ 375 ASCII tokens, well below the 480-token budget).
 pub fn chunk_code(content: &str) -> Vec<(String, usize, usize)> {
+    chunk_code_with(content, true)
+}
+
+/// Code-aware chunking with an explicit `symbol_split` toggle (see [`chunk_code`]). When
+/// `symbol_split` is true, a line that starts a definition flushes the current buffer once it
+/// holds at least `MIN_SYMBOL_SPLIT_LINES` lines, isolating each definition into its own chunk.
+pub fn chunk_code_with(content: &str, symbol_split: bool) -> Vec<(String, usize, usize)> {
     let mut out: Vec<(String, usize, usize)> = Vec::new();
     let mut cur = String::new();
     let mut cur_start = 1usize;
@@ -107,6 +132,11 @@ pub fn chunk_code(content: &str) -> Vec<(String, usize, usize)> {
             }
             cur_start = line_no + 1;
         } else {
+            // Symbol-boundary flush (Phase F): open a new chunk at a definition once the buffer
+            // holds a meaningful unit, so large type/definition files isolate each definition.
+            if symbol_split && cur_lines >= MIN_SYMBOL_SPLIT_LINES && starts_definition(line) {
+                flush(&mut cur, &mut cur_lines, cur_start, line_no - 1, &mut out);
+            }
             // Normal line (ASCII, or CJK within budget): check both caps before packing.
             let add_char_len = line_chars + 1; // +1 for the newline we append
             let would_exceed_chars =
@@ -263,7 +293,7 @@ pub fn ingest_document(
         == Some("file");
 
     let (chunk_texts, line_ranges, entities): IngestParts = if is_code {
-        let pieces = chunk_code(&new.content);
+        let pieces = chunk_code_with(&new.content, crate::config::code_symbol_split());
         let texts: Vec<String> = pieces.iter().map(|(t, _, _)| t.clone()).collect();
         let ranges: Vec<Option<(i64, i64)>> = pieces
             .iter()
@@ -535,6 +565,42 @@ mod tests {
     }
 
     #[test]
+    fn symbol_split_isolates_multiline_definitions() {
+        // Two multi-line interfaces; with symbol-split each lands in its own chunk.
+        let src = "interface Foo {\n  a: number;\n  b: string;\n  c: boolean;\n}\n\
+                   interface Bar {\n  x: number;\n  y: string;\n  z: boolean;\n}\n";
+        let out = chunk_code_with(src, true);
+        assert_eq!(out.len(), 2, "each interface should be its own chunk");
+        assert!(out[0].0.contains("interface Foo") && !out[0].0.contains("interface Bar"));
+        assert!(out[1].0.contains("interface Bar"));
+        // Line ranges are contiguous and cover every line (10 lines total).
+        assert_eq!(out[0].1, 1);
+        assert_eq!(out[0].2 + 1, out[1].1);
+        assert_eq!(out[1].2, 10);
+    }
+
+    #[test]
+    fn symbol_split_disabled_keeps_one_chunk() {
+        // Same input, split disabled: packs into a single chunk (well under the caps).
+        let src = "interface Foo {\n  a: number;\n  b: string;\n  c: boolean;\n}\n\
+                   interface Bar {\n  x: number;\n  y: string;\n  z: boolean;\n}\n";
+        assert_eq!(chunk_code_with(src, false).len(), 1);
+    }
+
+    #[test]
+    fn symbol_split_groups_tiny_oneliners() {
+        // A run of one-line decls must not become one chunk per line (min-lines guard).
+        let src = "type A = number;\ntype B = string;\ntype C = boolean;\n\
+                   type D = number;\ntype E = string;\ntype F = boolean;\n";
+        let out = chunk_code_with(src, true);
+        assert!(
+            out.len() < 6,
+            "tiny one-liners should group, got {} chunks",
+            out.len()
+        );
+    }
+
+    #[test]
     fn extract_code_entities_finds_defs_and_imports_case_preserving() {
         let text = "use crate::store::Store;\npub fn DoThing() {}\nstruct MyType;\n";
         let got = extract_code_entities(text);
@@ -594,7 +660,7 @@ mod tests {
         let cjk = "漫画作品の"; // 5 CJK chars
         let t = estimate_tokens(cjk);
         assert!(
-            t >= 4 && t <= 6,
+            (4..=6).contains(&t),
             "CJK token estimate should be near char count, got {t}"
         );
 
@@ -602,14 +668,14 @@ mod tests {
         let ascii = "hello world!!!"; // 14 chars
         let t2 = estimate_tokens(ascii);
         assert!(
-            t2 >= 3 && t2 <= 5,
+            (3..=5).contains(&t2),
             "ASCII token estimate should be ~chars/4, got {t2}"
         );
 
         // Mixed: large CJK string
         let cjk_long = "漫".repeat(480); // 480 CJK chars → ~480 tokens
         let t3 = estimate_tokens(&cjk_long);
-        assert!(t3 >= 475 && t3 <= 485, "expected ~480, got {t3}");
+        assert!((475..=485).contains(&t3), "expected ~480, got {t3}");
     }
 
     #[test]
@@ -781,7 +847,7 @@ mod tests {
         let content = format!("{line_a}\n{line_b}");
 
         let pieces = chunk_code(&content);
-        assert!(pieces.len() >= 1, "need ≥1 chunk for this test");
+        assert!(!pieces.is_empty(), "need ≥1 chunk for this test");
 
         let embedder = FailNthEmbedder {
             inner: crate::embed::HashEmbedder::new(32),

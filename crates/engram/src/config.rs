@@ -81,6 +81,24 @@ impl Config {
     }
 }
 
+/// Whether code chunking flushes at definition boundaries (Phase F symbol-split). Process-global
+/// cached read of `ENGRAM_CODE_SYMBOL_SPLIT` (default true). Kept in config.rs so the env var
+/// stays registered here even though `chunk_code` is a free function with no `Config` access.
+pub fn code_symbol_split() -> bool {
+    use std::sync::OnceLock;
+    static CACHE: OnceLock<bool> = OnceLock::new();
+    *CACHE.get_or_init(|| {
+        std::env::var("ENGRAM_CODE_SYMBOL_SPLIT")
+            .ok()
+            .and_then(|s| match s.to_ascii_lowercase().as_str() {
+                "true" | "1" | "yes" | "on" => Some(true),
+                "false" | "0" | "no" | "off" => Some(false),
+                _ => None,
+            })
+            .unwrap_or(true)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
