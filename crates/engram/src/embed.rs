@@ -74,8 +74,11 @@ fn with_retries<T>(
 
 fn is_retryable(e: &reqwest::Error) -> bool {
     // Retry transient failures: timeouts, connection errors, missing status, or 5xx.
-    // Do NOT retry deterministic 4xx (e.g. a 400 from an oversized/odd input).
-    e.is_timeout() || e.is_connect() || e.status().is_none_or(|s| s.is_server_error())
+    // Do NOT retry deterministic 4xx (e.g. a 400 from an oversized/odd input) or a body
+    // decode error (a malformed 2xx body recurs on retry — futile latency).
+    e.is_timeout()
+        || e.is_connect()
+        || (!e.is_decode() && e.status().is_none_or(|s| s.is_server_error()))
 }
 
 /// Real embedder backed by a local Ollama server (`POST /api/embeddings`).
