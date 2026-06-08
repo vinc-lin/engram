@@ -1,0 +1,22 @@
+{
+  "namespace": "repo:agentmemory",
+  "repo": "../agentmemory",
+  "description": "Labeled NL->file recall set for validating engram code search on the agentmemory corpus. A query is a hit@k if any of its gold files appears in the top-k results.",
+  "queries": [
+    { "q": "how does hybrid search combine BM25 and vector retrieval with reciprocal rank fusion", "gold": ["src/state/hybrid-search.ts"] },
+    { "q": "where is cosine similarity computed for embedding vectors", "gold": ["src/state/vector-index.ts"] },
+    { "q": "what are the valid memory types in the system", "gold": ["src/types.ts"] },
+    { "q": "how does the CJK tokenizer segment Chinese Japanese and Korean text by script", "gold": ["src/state/cjk-segmenter.ts"] },
+    { "q": "where is BM25 IDF term frequency scoring implemented", "gold": ["src/state/search-index.ts"] },
+    { "q": "how are memories deduplicated by similarity when saving", "gold": ["src/functions/remember.ts"] },
+    { "q": "what is the structure of a CompressedObservation", "gold": ["src/types.ts"] },
+    { "q": "how is the knowledge graph persisted and queried", "gold": ["src/functions/graph.ts", "src/state/schema.ts"] },
+    { "q": "what LLM providers are supported and how does provider fallback work", "gold": ["src/providers/index.ts"] },
+    { "q": "how are raw observations compressed into high level facts", "gold": ["src/functions/compress.ts"] },
+    { "q": "where is the vector index persisted to disk and reloaded", "gold": ["src/state/index-persistence.ts"] },
+    { "q": "what agent lifecycle hooks are available", "gold": ["src/types.ts"] },
+    { "q": "how is project isolation enforced between different projects", "gold": ["src/functions/remember.ts"] },
+    { "q": "how does the graph snapshot avoid O(n) enumeration on large corpora", "gold": ["src/functions/graph.ts"] },
+    { "q": "where are entities extracted from a query for graph aware retrieval", "gold": ["src/functions/query-expansion.ts"] }
+  ]
+}
