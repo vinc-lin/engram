@@ -270,8 +270,7 @@ mod tests {
     #[ignore = "requires the litellm gateway reachable with a valid ENGRAM_GATEWAY_KEY"]
     fn gateway_summarizes_live() {
         let key = std::env::var("ENGRAM_GATEWAY_KEY").unwrap_or_default();
-        let c =
-            GatewayChatClient::new("http://127.0.0.1:4000".into(), key, "qwen3".into(), 90);
+        let c = GatewayChatClient::new("http://127.0.0.1:4000".into(), key, "qwen3".into(), 90);
         let r = c.summarize("Reply with exactly: OK", 32).unwrap();
         assert!(!r.text.is_empty());
     }

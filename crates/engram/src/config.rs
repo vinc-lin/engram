@@ -47,8 +47,7 @@ impl Config {
             llm_timeout_secs: get("ENGRAM_LLM_TIMEOUT_SECS")
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(90),
-            audit_url: get("ENGRAM_AUDIT_URL")
-                .unwrap_or_else(|| "http://127.0.0.1:8383".into()),
+            audit_url: get("ENGRAM_AUDIT_URL").unwrap_or_else(|| "http://127.0.0.1:8383".into()),
             jobs_workers: get("ENGRAM_JOBS_WORKERS")
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(2),

@@ -95,6 +95,24 @@ pub struct Store {
     write: Arc<Mutex<Connection>>,
 }
 
+fn migrate(conn: &Connection) -> Result<()> {
+    // Read the current columns of vector_chunks.
+    let mut stmt = conn.prepare("PRAGMA table_info(vector_chunks)")?;
+    let col_names: Vec<String> = stmt
+        .query_map([], |r| r.get::<_, String>(1))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+
+    if !col_names.iter().any(|c| c == "line_start") {
+        conn.execute_batch("ALTER TABLE vector_chunks ADD COLUMN line_start INTEGER;")?;
+    }
+    if !col_names.iter().any(|c| c == "line_end") {
+        conn.execute_batch("ALTER TABLE vector_chunks ADD COLUMN line_end INTEGER;")?;
+    }
+
+    conn.execute_batch("PRAGMA user_version = 1;")?;
+    Ok(())
+}
+
 impl Store {
     pub fn open(path: &str) -> Result<Self> {
         let write = Connection::open(path)?;
@@ -102,6 +120,7 @@ impl Store {
             "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=15000;",
         )?;
         write.execute_batch(SCHEMA)?;
+        migrate(&write)?;
 
         let manager = SqliteConnectionManager::file(path)
             .with_init(|c| c.execute_batch("PRAGMA busy_timeout=15000;"));
@@ -750,6 +769,64 @@ mod tests {
         assert_eq!((first.line_start, first.line_end), (Some(1), Some(2)));
         let second = rows.iter().find(|r| r.text == "tail").unwrap();
         assert_eq!((second.line_start, second.line_end), (None, None));
+    }
+
+    #[test]
+    fn migrate_adds_line_columns_to_old_schema() {
+        use crate::embed::HashEmbedder;
+        use crate::ingest::ingest_document;
+        // 1. Build an "old" DB with vector_chunks missing line_start / line_end.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("old.db");
+        {
+            let conn = rusqlite::Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE vector_chunks (
+                    namespace       TEXT NOT NULL,
+                    document_id     TEXT NOT NULL,
+                    chunk_id        TEXT NOT NULL,
+                    text            TEXT NOT NULL,
+                    embedding       BLOB NOT NULL,
+                    model_signature TEXT NOT NULL,
+                    dim             INTEGER NOT NULL,
+                    created_at      REAL NOT NULL,
+                    PRIMARY KEY(namespace, chunk_id)
+                );",
+            )
+            .unwrap();
+            // conn drops here, closing the file
+        }
+        // 2. Open via Store::open — migrate() must add the missing columns.
+        let store = Store::open(path.to_str().unwrap()).unwrap();
+        // 3. Verify the columns now exist via PRAGMA table_info.
+        {
+            let conn = rusqlite::Connection::open(&path).unwrap();
+            let mut stmt = conn.prepare("PRAGMA table_info(vector_chunks)").unwrap();
+            let col_names: Vec<String> = stmt
+                .query_map([], |r| r.get::<_, String>(1))
+                .unwrap()
+                .map(|r| r.unwrap())
+                .collect();
+            assert!(
+                col_names.contains(&"line_start".to_string()),
+                "line_start missing; got: {col_names:?}"
+            );
+            assert!(
+                col_names.contains(&"line_end".to_string()),
+                "line_end missing; got: {col_names:?}"
+            );
+        }
+        // 4. End-to-end ingest on the migrated DB must succeed.
+        let embedder = HashEmbedder::new(64);
+        let new = NewDoc {
+            key: "file.rs".into(),
+            title: "file.rs".into(),
+            content: "fn first_line() {}\nfn second_line() {}\n".into(),
+            author: "code".into(),
+            taint: Taint::Internal,
+            meta: Some(serde_json::json!({"kind": "file"})),
+        };
+        ingest_document(&store, &embedder, "ns", &new).unwrap();
     }
 
     #[test]
