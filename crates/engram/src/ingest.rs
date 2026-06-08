@@ -1,0 +1,465 @@
+use crate::embed::Embedder;
+use crate::error::Result;
+use crate::model::{MemoryDoc, NewDoc};
+use crate::store::Store;
+use regex::Regex;
+use std::sync::OnceLock;
+
+type IngestParts = (Vec<String>, Vec<Option<(i64, i64)>>, Vec<Vec<String>>);
+
+/// Max characters (not bytes) per chunk — CJK-safe.
+const MAX_CHUNK_CHARS: usize = 800;
+
+/// Max characters per code chunk (code packs by line, not paragraph).
+const MAX_CODE_CHUNK_CHARS: usize = 1500;
+
+/// Code-aware chunking: pack consecutive lines up to a char cap, never splitting a line.
+/// Returns `(chunk_text, start_line, end_line)` with 1-based inclusive line numbers. A single
+/// line longer than the cap becomes its own chunk (line boundaries are always respected).
+pub fn chunk_code(content: &str) -> Vec<(String, usize, usize)> {
+    let mut out: Vec<(String, usize, usize)> = Vec::new();
+    let mut cur = String::new();
+    let mut cur_start = 1usize;
+    let mut cur_lines = 0usize;
+    let mut line_no = 0usize;
+
+    for line in content.lines() {
+        line_no += 1;
+        let add_len = line.chars().count() + 1; // +1 for the newline we append
+        if cur_lines > 0 && cur.chars().count() + add_len > MAX_CODE_CHUNK_CHARS {
+            out.push((std::mem::take(&mut cur), cur_start, line_no - 1));
+            cur_lines = 0;
+        }
+        if cur_lines == 0 {
+            cur_start = line_no;
+        }
+        cur.push_str(line);
+        cur.push('\n');
+        cur_lines += 1;
+    }
+    if cur_lines > 0 {
+        out.push((cur, cur_start, line_no));
+    }
+    out
+}
+
+/// Split content into chunks: paragraph-aware (`\n\n`), packed up to a char cap,
+/// with hard char-splitting of any single oversized paragraph. Deterministic.
+pub fn chunk(content: &str) -> Vec<String> {
+    let mut chunks: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut cur_len = 0usize;
+
+    let flush = |cur: &mut String, cur_len: &mut usize, chunks: &mut Vec<String>| {
+        if !cur.is_empty() {
+            chunks.push(std::mem::take(cur));
+            *cur_len = 0;
+        }
+    };
+
+    for para in content.split("\n\n") {
+        let p = para.trim();
+        if p.is_empty() {
+            continue;
+        }
+        let plen = p.chars().count();
+        if plen > MAX_CHUNK_CHARS {
+            flush(&mut cur, &mut cur_len, &mut chunks);
+            let chars: Vec<char> = p.chars().collect();
+            for piece in chars.chunks(MAX_CHUNK_CHARS) {
+                chunks.push(piece.iter().collect());
+            }
+            continue;
+        }
+        if cur_len + plen + 1 > MAX_CHUNK_CHARS {
+            flush(&mut cur, &mut cur_len, &mut chunks);
+        }
+        if !cur.is_empty() {
+            cur.push('\n');
+            cur_len += 1;
+        }
+        cur.push_str(p);
+        cur_len += plen;
+    }
+    flush(&mut cur, &mut cur_len, &mut chunks);
+    if chunks.is_empty() {
+        let t = content.trim();
+        if !t.is_empty() {
+            chunks.push(t.to_string());
+        }
+    }
+    chunks
+}
+
+/// Mechanical (regex) entity extraction → canonical ids
+/// (`email:`, `url:`, `handle:`, `hashtag:`). Sorted + deduped.
+/// Semantic (LLM) entities are a later plan.
+pub fn extract_entities(text: &str) -> Vec<String> {
+    static EMAIL: OnceLock<Regex> = OnceLock::new();
+    static URL: OnceLock<Regex> = OnceLock::new();
+    static HANDLE: OnceLock<Regex> = OnceLock::new();
+    static HASHTAG: OnceLock<Regex> = OnceLock::new();
+
+    let email = EMAIL.get_or_init(|| Regex::new(r"[\w.+-]+@[\w-]+\.[\w.-]+").unwrap());
+    let url = URL.get_or_init(|| Regex::new(r"https?://[^\s]+").unwrap());
+    let handle = HANDLE.get_or_init(|| Regex::new(r"(?:^|[^\w@])@(\w+)").unwrap());
+    let hashtag = HASHTAG.get_or_init(|| Regex::new(r"(?:^|[^\w#])#(\w+)").unwrap());
+
+    let mut out: Vec<String> = Vec::new();
+    for m in email.find_iter(text) {
+        out.push(format!("email:{}", m.as_str().to_lowercase()));
+    }
+    // Mask URL spans before the handle/hashtag passes so `@name` / `#tag` *inside* a
+    // URL (e.g. https://x.com/@alice#sec) aren't mis-extracted as social mentions.
+    // Replacing each match with an equal-length run of spaces keeps later byte offsets valid.
+    let mut masked = text.to_string();
+    for m in url.find_iter(text) {
+        out.push(format!("url:{}", m.as_str()));
+        masked.replace_range(m.range(), &" ".repeat(m.as_str().len()));
+    }
+    for c in handle.captures_iter(&masked) {
+        out.push(format!("handle:{}", c[1].to_lowercase()));
+    }
+    for c in hashtag.captures_iter(&masked) {
+        out.push(format!("hashtag:{}", c[1].to_lowercase()));
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// Mechanical (regex) code entities → canonical ids: `sym:<name>` (definitions) and
+/// `import:<target>` (import/use/require/include/from targets). Case-preserving (code is
+/// case-sensitive). Sorted + deduped. Language-agnostic baseline; AST-precise symbols are a
+/// later (tree-sitter) phase.
+pub fn extract_code_entities(text: &str) -> Vec<String> {
+    static DEF: OnceLock<Regex> = OnceLock::new();
+    static IMPORT: OnceLock<Regex> = OnceLock::new();
+
+    let def = DEF.get_or_init(|| {
+        Regex::new(
+            r"(?m)^\s*(?:pub\s+)?(?:async\s+)?(?:fn|def|class|struct|enum|interface|trait|type|func)\s+([A-Za-z_][A-Za-z0-9_]*)",
+        )
+        .unwrap()
+    });
+    let import = IMPORT.get_or_init(|| {
+        Regex::new(r#"(?m)^\s*(?:use|import|from|require|include|using)\s+([^\s;(){}'"]+)"#)
+            .unwrap()
+    });
+
+    let mut out: Vec<String> = Vec::new();
+    for c in def.captures_iter(text) {
+        out.push(format!("sym:{}", &c[1]));
+    }
+    for c in import.captures_iter(text) {
+        out.push(format!("import:{}", &c[1]));
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// Hot ingest: chunk the content, embed every chunk **off the write lock**, extract mechanical
+/// entities, then commit the doc + chunks + entities + the post-acquire job atomically.
+pub fn ingest_document(
+    store: &Store,
+    embedder: &dyn Embedder,
+    namespace: &str,
+    new: &NewDoc,
+) -> Result<MemoryDoc> {
+    let is_code = new
+        .meta
+        .as_ref()
+        .and_then(|m| m.get("kind"))
+        .and_then(|k| k.as_str())
+        == Some("file");
+
+    let (chunk_texts, line_ranges, entities): IngestParts = if is_code {
+        let pieces = chunk_code(&new.content);
+        let texts: Vec<String> = pieces.iter().map(|(t, _, _)| t.clone()).collect();
+        let ranges: Vec<Option<(i64, i64)>> = pieces
+            .iter()
+            .map(|(_, s, e)| Some((*s as i64, *e as i64)))
+            .collect();
+        let path_ent = format!("path:{}", new.key);
+        let ents: Vec<Vec<String>> = texts
+            .iter()
+            .map(|t| {
+                let mut es = extract_code_entities(t);
+                es.push(path_ent.clone());
+                es.sort();
+                es.dedup();
+                es
+            })
+            .collect();
+        (texts, ranges, ents)
+    } else {
+        let texts = chunk(&new.content);
+        let ranges = vec![None; texts.len()];
+        let ents: Vec<Vec<String>> = texts.iter().map(|t| extract_entities(t)).collect();
+        (texts, ranges, ents)
+    };
+
+    let mut embeddings = Vec::with_capacity(chunk_texts.len());
+    for t in &chunk_texts {
+        embeddings.push(embedder.embed(t)?); // off-lock — the slow part
+    }
+    let sig = embedder.signature();
+    store.commit_ingest(
+        namespace,
+        new,
+        &chunk_texts,
+        &embeddings,
+        &entities,
+        &line_ranges,
+        &sig,
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn short_content_is_one_chunk() {
+        assert_eq!(chunk("hello world"), vec!["hello world".to_string()]);
+        assert!(chunk("   ").is_empty());
+    }
+
+    #[test]
+    fn paragraphs_split_and_pack() {
+        let big = "x".repeat(900);
+        let out = chunk(&format!("para one\n\npara two\n\n{big}"));
+        assert_eq!(out.len(), 3);
+        assert!(out[0].contains("para one") && out[0].contains("para two"));
+        assert_eq!(out[1].chars().count(), 800);
+        assert_eq!(out[2].chars().count(), 100);
+    }
+
+    #[test]
+    fn cjk_safe() {
+        let s = "漫画".repeat(500); // 1000 CJK chars, one paragraph
+        let out = chunk(&s);
+        assert_eq!(out.len(), 2);
+        assert!(!out.iter().any(|c| c.contains('\u{FFFD}')));
+    }
+
+    #[test]
+    fn ingest_document_chunks_embeds_extracts_and_enqueues() {
+        use crate::embed::{Embedder, HashEmbedder};
+        use crate::model::{NewDoc, Taint};
+        use crate::store::Store;
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(dir.path().join("t.db").to_str().unwrap()).unwrap();
+        let e = HashEmbedder::new(32);
+        let mk = |k: &str, c: &str| NewDoc {
+            key: k.into(),
+            title: k.into(),
+            content: c.into(),
+            author: "a".into(),
+            taint: Taint::Internal,
+            meta: None,
+        };
+
+        // Two short paragraphs pack into one chunk; a post-acquire job is enqueued.
+        let doc = ingest_document(
+            &store,
+            &e,
+            "alice",
+            &mk(
+                "d1",
+                "Contact @bob about the launch.\n\nSee https://x.com/a and email a@b.com",
+            ),
+        )
+        .unwrap();
+        let d1: Vec<_> = store
+            .chunks_for_namespace("alice", &e.signature())
+            .unwrap()
+            .into_iter()
+            .filter(|(d, _, _)| d == &doc.document_id)
+            .collect();
+        assert_eq!(d1.len(), 1);
+        assert!(d1.iter().all(|(_, _, v)| v.len() == 32));
+        let hits = store
+            .docs_with_entities("alice", &["handle:bob".into(), "email:a@b.com".into()])
+            .unwrap();
+        assert_eq!(hits.get(&doc.document_id).copied().unwrap_or(0), 2);
+        assert_eq!(
+            store
+                .job(&format!("alice:{}", doc.document_id))
+                .unwrap()
+                .unwrap()
+                .0,
+            "pending"
+        );
+
+        // A long single paragraph hard-splits into multiple chunks under one doc.
+        let long = format!("@carol owns the launch. {}", "x".repeat(900));
+        let doc2 = ingest_document(&store, &e, "alice", &mk("d2", &long)).unwrap();
+        let d2: Vec<_> = store
+            .chunks_for_namespace("alice", &e.signature())
+            .unwrap()
+            .into_iter()
+            .filter(|(d, _, _)| d == &doc2.document_id)
+            .collect();
+        assert_eq!(d2.len(), 2);
+
+        // Re-ingest d1 with different content replaces its chunks + entities, same id.
+        let doc1b =
+            ingest_document(&store, &e, "alice", &mk("d1", "totally different now")).unwrap();
+        assert_eq!(doc1b.document_id, doc.document_id);
+        let d1b: Vec<_> = store
+            .chunks_for_namespace("alice", &e.signature())
+            .unwrap()
+            .into_iter()
+            .filter(|(d, _, _)| d == &doc.document_id)
+            .collect();
+        assert_eq!(d1b.len(), 1);
+        assert!(store
+            .docs_with_entities("alice", &["handle:bob".into()])
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn extracts_canonical_entities() {
+        let got = extract_entities(
+            "Ping Alice at Alice@Example.com or @aliceH about #LaunchDay see https://x.com/a",
+        );
+        assert!(got.contains(&"email:alice@example.com".to_string()));
+        assert!(got.contains(&"handle:aliceh".to_string()));
+        assert!(got.contains(&"hashtag:launchday".to_string()));
+        assert!(got.contains(&"url:https://x.com/a".to_string()));
+        assert!(!got.iter().any(|e| e == "handle:example.com"));
+        let mut sorted = got.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(got, sorted);
+    }
+
+    #[test]
+    fn entities_inside_urls_are_not_mentions() {
+        let got = extract_entities("see https://x.com/@alice#sec then ping @bob about #launch");
+        assert!(got.contains(&"url:https://x.com/@alice#sec".to_string()));
+        assert!(got.contains(&"handle:bob".to_string()));
+        assert!(got.contains(&"hashtag:launch".to_string()));
+        assert!(!got.contains(&"handle:alice".to_string()));
+        assert!(!got.contains(&"hashtag:sec".to_string()));
+    }
+
+    #[test]
+    fn chunk_code_one_chunk_for_small_input() {
+        let out = chunk_code("fn main() {\n    let x = 1;\n}\n");
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].1, 1);
+        assert_eq!(out[0].2, 3);
+        assert!(out[0].0.contains("fn main()"));
+        assert!(out[0].0.contains("let x = 1;"));
+    }
+
+    #[test]
+    fn chunk_code_splits_on_char_cap_at_line_boundary() {
+        let a = "a".repeat(800);
+        let b = "b".repeat(800);
+        let out = chunk_code(&format!("{a}\n{b}"));
+        assert_eq!(out.len(), 2);
+        assert_eq!((out[0].1, out[0].2), (1, 1));
+        assert_eq!((out[1].1, out[1].2), (2, 2));
+        assert!(out[0].0.contains(&a));
+        assert!(out[1].0.contains(&b));
+    }
+
+    #[test]
+    fn chunk_code_oversized_single_line_is_its_own_chunk() {
+        let big = "z".repeat(2000);
+        let out = chunk_code(&format!("head\n{big}\ntail"));
+        assert_eq!(out.len(), 3);
+        assert_eq!((out[0].1, out[0].2), (1, 1));
+        assert_eq!((out[1].1, out[1].2), (2, 2));
+        assert_eq!((out[2].1, out[2].2), (3, 3));
+        assert!(out[1].0.contains(&big));
+    }
+
+    #[test]
+    fn chunk_code_empty_is_no_chunks() {
+        assert!(chunk_code("").is_empty());
+    }
+
+    #[test]
+    fn extract_code_entities_finds_defs_and_imports_case_preserving() {
+        let text = "use crate::store::Store;\npub fn DoThing() {}\nstruct MyType;\n";
+        let got = extract_code_entities(text);
+        assert!(got.contains(&"import:crate::store::Store".to_string()));
+        assert!(got.contains(&"sym:DoThing".to_string()));
+        assert!(got.contains(&"sym:MyType".to_string()));
+        let mut sorted = got.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(got, sorted);
+    }
+
+    #[test]
+    fn extract_code_entities_handles_multiple_languages() {
+        let py = "import os\ndef handler():\n    pass\nclass Worker:\n    pass\n";
+        let got = extract_code_entities(py);
+        assert!(got.contains(&"import:os".to_string()));
+        assert!(got.contains(&"sym:handler".to_string()));
+        assert!(got.contains(&"sym:Worker".to_string()));
+    }
+
+    #[test]
+    fn extract_code_entities_empty_for_prose() {
+        assert!(extract_code_entities("just some words, nothing to define").is_empty());
+    }
+
+    #[test]
+    fn ingest_code_mode_sets_line_ranges_and_code_entities() {
+        use crate::embed::HashEmbedder;
+        use crate::model::{NewDoc, Taint};
+        use crate::store::Store;
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(dir.path().join("t.db").to_str().unwrap()).unwrap();
+        let e = HashEmbedder::new(32);
+        let new = NewDoc {
+            key: "src/lib.rs".into(),
+            title: "src/lib.rs".into(),
+            content: "use crate::store::Store;\npub fn run() {}\n".into(),
+            author: "code".into(),
+            taint: Taint::Internal,
+            meta: Some(serde_json::json!({"kind": "file", "lang": "rust"})),
+        };
+        let doc = ingest_document(&store, &e, "repo:x", &new).unwrap();
+        let rows = store.chunks_for_doc("repo:x", &doc.document_id).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!((rows[0].line_start, rows[0].line_end), (Some(1), Some(2)));
+        assert!(rows[0].entities.contains(&"sym:run".to_string()));
+        assert!(rows[0]
+            .entities
+            .contains(&"import:crate::store::Store".to_string()));
+        assert!(rows[0].entities.contains(&"path:src/lib.rs".to_string()));
+    }
+
+    #[test]
+    fn ingest_prose_mode_unchanged_when_no_file_kind() {
+        use crate::embed::HashEmbedder;
+        use crate::model::{NewDoc, Taint};
+        use crate::store::Store;
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(dir.path().join("t.db").to_str().unwrap()).unwrap();
+        let e = HashEmbedder::new(32);
+        let new = NewDoc {
+            key: "note".into(),
+            title: "note".into(),
+            content: "ping @bob about the launch".into(),
+            author: "a".into(),
+            taint: Taint::Internal,
+            meta: None,
+        };
+        let doc = ingest_document(&store, &e, "alice", &new).unwrap();
+        let rows = store.chunks_for_doc("alice", &doc.document_id).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!((rows[0].line_start, rows[0].line_end), (None, None));
+        assert!(rows[0].entities.contains(&"handle:bob".to_string()));
+        assert!(rows[0].entities.iter().all(|e| !e.starts_with("sym:")));
+    }
+}
