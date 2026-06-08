@@ -351,6 +351,11 @@ dependencies = [
 [[package]]
 name = "engram-mcp"
 version = "0.1.0"
+dependencies = [
+ "reqwest",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "equivalent"
