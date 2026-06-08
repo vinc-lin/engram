@@ -1,4 +1,10 @@
+use std::time::Duration;
+
 use crate::error::{Error, Result};
+
+const EMBED_TIMEOUT_SECS: u64 = 30;
+const EMBED_MAX_ATTEMPTS: usize = 3;
+const EMBED_BACKOFF: Duration = Duration::from_millis(1500);
 
 /// Embeds text into a fixed-dimension vector. The service owns embedding so all
 /// stored vectors share one model signature.
@@ -46,6 +52,32 @@ impl Embedder for HashEmbedder {
     }
 }
 
+/// Retry `f` up to `max_attempts`, sleeping `backoff` between attempts, but only while the
+/// returned error is flagged retryable. The closure returns Err((retryable, error)).
+fn with_retries<T>(
+    max_attempts: usize,
+    backoff: Duration,
+    mut f: impl FnMut() -> std::result::Result<T, (bool, crate::error::Error)>,
+) -> crate::error::Result<T> {
+    let mut attempt = 1;
+    loop {
+        match f() {
+            Ok(v) => return Ok(v),
+            Err((retryable, _e)) if retryable && attempt < max_attempts => {
+                std::thread::sleep(backoff);
+                attempt += 1;
+            }
+            Err((_, e)) => return Err(e),
+        }
+    }
+}
+
+fn is_retryable(e: &reqwest::Error) -> bool {
+    // Retry transient failures: timeouts, connection errors, missing status, or 5xx.
+    // Do NOT retry deterministic 4xx (e.g. a 400 from an oversized/odd input).
+    e.is_timeout() || e.is_connect() || e.status().is_none_or(|s| s.is_server_error())
+}
+
 /// Real embedder backed by a local Ollama server (`POST /api/embeddings`).
 pub struct OllamaEmbedder {
     base_url: String,
@@ -60,7 +92,10 @@ impl OllamaEmbedder {
             base_url,
             model,
             dim,
-            client: reqwest::blocking::Client::new(),
+            client: reqwest::blocking::Client::builder()
+                .timeout(Duration::from_secs(EMBED_TIMEOUT_SECS))
+                .build()
+                .expect("build embed client"),
         }
     }
 }
@@ -78,20 +113,21 @@ impl Embedder for OllamaEmbedder {
         }
 
         let url = format!("{}/api/embeddings", self.base_url);
-        let resp: Resp = self
-            .client
-            .post(url)
-            .json(&Req {
-                model: &self.model,
-                prompt: text,
-            })
-            .send()
-            .map_err(|e| Error::Embed(e.to_string()))?
-            .error_for_status()
-            .map_err(|e| Error::Embed(e.to_string()))?
-            .json()
-            .map_err(|e| Error::Embed(e.to_string()))?;
-        Ok(resp.embedding)
+        with_retries(EMBED_MAX_ATTEMPTS, EMBED_BACKOFF, || {
+            let resp: Resp = self
+                .client
+                .post(&url)
+                .json(&Req {
+                    model: &self.model,
+                    prompt: text,
+                })
+                .send()
+                .and_then(|r| r.error_for_status())
+                .map_err(|e| (is_retryable(&e), Error::Embed(e.to_string())))?
+                .json()
+                .map_err(|e| (is_retryable(&e), Error::Embed(e.to_string())))?;
+            Ok(resp.embedding)
+        })
     }
     fn signature(&self) -> String {
         format!("ollama:{}:{}", self.model, self.dim)
@@ -119,7 +155,10 @@ impl GatewayEmbedder {
             api_key,
             model,
             dim,
-            client: reqwest::blocking::Client::new(),
+            client: reqwest::blocking::Client::builder()
+                .timeout(Duration::from_secs(EMBED_TIMEOUT_SECS))
+                .build()
+                .expect("build embed client"),
         }
     }
 }
@@ -141,25 +180,26 @@ impl Embedder for GatewayEmbedder {
         }
 
         let url = format!("{}/v1/embeddings", self.base_url);
-        let resp: Resp = self
-            .client
-            .post(url)
-            .bearer_auth(&self.api_key)
-            .json(&Req {
-                model: &self.model,
-                input: text,
-            })
-            .send()
-            .map_err(|e| Error::Embed(e.to_string()))?
-            .error_for_status()
-            .map_err(|e| Error::Embed(e.to_string()))?
-            .json()
-            .map_err(|e| Error::Embed(e.to_string()))?;
-        resp.data
-            .into_iter()
-            .next()
-            .map(|d| d.embedding)
-            .ok_or_else(|| Error::Embed("no embedding data".into()))
+        with_retries(EMBED_MAX_ATTEMPTS, EMBED_BACKOFF, || {
+            let resp: Resp = self
+                .client
+                .post(&url)
+                .bearer_auth(&self.api_key)
+                .json(&Req {
+                    model: &self.model,
+                    input: text,
+                })
+                .send()
+                .and_then(|r| r.error_for_status())
+                .map_err(|e| (is_retryable(&e), Error::Embed(e.to_string())))?
+                .json()
+                .map_err(|e| (is_retryable(&e), Error::Embed(e.to_string())))?;
+            resp.data
+                .into_iter()
+                .next()
+                .map(|d| d.embedding)
+                .ok_or_else(|| (false, Error::Embed("no embedding data".into())))
+        })
     }
     fn signature(&self) -> String {
         format!("gateway:{}:{}", self.model, self.dim)
@@ -171,10 +211,52 @@ impl Embedder for GatewayEmbedder {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
+
     use super::*;
 
     fn dot(a: &[f32], b: &[f32]) -> f32 {
         a.iter().zip(b).map(|(x, y)| x * y).sum()
+    }
+
+    #[test]
+    fn with_retries_succeeds_after_transient() {
+        let calls = Cell::new(0usize);
+        let result = with_retries(EMBED_MAX_ATTEMPTS, Duration::ZERO, || {
+            let n = calls.get() + 1;
+            calls.set(n);
+            if n < 3 {
+                Err((true, Error::Embed("x".into())))
+            } else {
+                Ok(())
+            }
+        });
+        assert!(result.is_ok());
+        assert_eq!(calls.get(), 3);
+    }
+
+    #[test]
+    fn with_retries_stops_on_non_retryable() {
+        let calls = Cell::new(0usize);
+        let result: crate::error::Result<()> =
+            with_retries(EMBED_MAX_ATTEMPTS, Duration::ZERO, || {
+                calls.set(calls.get() + 1);
+                Err((false, Error::Embed("fatal".into())))
+            });
+        assert!(result.is_err());
+        assert_eq!(calls.get(), 1);
+    }
+
+    #[test]
+    fn with_retries_gives_up_after_max() {
+        let calls = Cell::new(0usize);
+        let result: crate::error::Result<()> =
+            with_retries(EMBED_MAX_ATTEMPTS, Duration::ZERO, || {
+                calls.set(calls.get() + 1);
+                Err((true, Error::Embed("transient".into())))
+            });
+        assert!(result.is_err());
+        assert_eq!(calls.get(), EMBED_MAX_ATTEMPTS);
     }
 
     #[test]
