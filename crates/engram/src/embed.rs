@@ -12,6 +12,11 @@ pub trait Embedder: Send + Sync {
     fn embed(&self, text: &str) -> Result<Vec<f32>>;
     fn signature(&self) -> String;
     fn dim(&self) -> usize;
+
+    /// Embed many texts at once. Default loops `embed`; impls may override for true batching.
+    fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
+        texts.iter().map(|t| self.embed(t)).collect()
+    }
 }
 
 /// Deterministic, network-free embedder for tests: bag-of-words hashed into
@@ -204,6 +209,64 @@ impl Embedder for GatewayEmbedder {
                 .ok_or_else(|| (false, Error::Embed("no embedding data".into())))
         })
     }
+
+    fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
+        if texts.is_empty() {
+            return Ok(vec![]);
+        }
+
+        #[derive(serde::Serialize)]
+        struct Req<'a> {
+            model: &'a str,
+            input: &'a [&'a str],
+        }
+        #[derive(serde::Deserialize)]
+        struct EmbData {
+            index: usize,
+            embedding: Vec<f32>,
+        }
+        #[derive(serde::Deserialize)]
+        struct Resp {
+            data: Vec<EmbData>,
+        }
+
+        let url = format!("{}/v1/embeddings", self.base_url);
+        let n = texts.len();
+        with_retries(EMBED_MAX_ATTEMPTS, EMBED_BACKOFF, || {
+            let resp: Resp = self
+                .client
+                .post(&url)
+                .bearer_auth(&self.api_key)
+                .json(&Req {
+                    model: &self.model,
+                    input: texts,
+                })
+                .send()
+                .and_then(|r| r.error_for_status())
+                .map_err(|e| (is_retryable(&e), Error::Embed(e.to_string())))?
+                .json()
+                .map_err(|e| (is_retryable(&e), Error::Embed(e.to_string())))?;
+
+            if resp.data.is_empty() {
+                return Err((false, Error::Embed("no embedding data".into())));
+            }
+            if resp.data.len() != n {
+                return Err((
+                    false,
+                    Error::Embed(format!(
+                        "batch length mismatch: sent {n}, got {}",
+                        resp.data.len()
+                    )),
+                ));
+            }
+
+            // Sort by the index field returned by litellm so order matches input.
+            let mut data = resp.data;
+            data.sort_by_key(|d| d.index);
+            Ok(data.into_iter().map(|d| d.embedding).collect())
+        })
+    }
+
     fn signature(&self) -> String {
         format!("gateway:{}:{}", self.model, self.dim)
     }
@@ -287,6 +350,17 @@ mod tests {
         let e = OllamaEmbedder::new("http://127.0.0.1:11434".into(), "bge-m3".into(), 1024);
         let v = e.embed("hello").unwrap();
         assert_eq!(v.len(), 1024);
+    }
+
+    #[test]
+    fn hash_embed_batch_matches_embed() {
+        let e = HashEmbedder::new(64);
+        let batch = e.embed_batch(&["a", "b"]).unwrap();
+        let single_a = e.embed("a").unwrap();
+        let single_b = e.embed("b").unwrap();
+        assert_eq!(batch.len(), 2);
+        assert_eq!(batch[0], single_a);
+        assert_eq!(batch[1], single_b);
     }
 
     #[test]

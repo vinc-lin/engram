@@ -13,6 +13,10 @@ const MAX_CHUNK_CHARS: usize = 800;
 /// Max characters per code chunk (code packs by line, not paragraph).
 const MAX_CODE_CHUNK_CHARS: usize = 1500;
 
+/// Number of chunks per batch embedding call. When `embed_batch` fails for a window, we fall
+/// back to per-chunk calls for that window only, preserving skip-on-failure semantics.
+const EMBED_BATCH: usize = 64;
+
 /// Token budget for code chunks — conservatively below the embed-model's 512-token ceiling.
 /// Each emitted chunk must have `estimate_tokens(text) <= CODE_CHUNK_TOKEN_BUDGET`.
 /// Could become embedder-aware in a future refactor (e.g. passed in from `GatewayEmbedder`).
@@ -284,23 +288,49 @@ pub fn ingest_document(
         (texts, ranges, ents)
     };
 
-    // Embed each chunk off-lock; skip any chunk whose embedding fails and warn.
+    // Embed chunks off-lock in batches of EMBED_BATCH; skip any chunk whose embedding fails.
+    // On a batch error (one bad input poisons the whole batch), fall back to per-chunk for
+    // that window only — this preserves the skip-on-failure semantics at single-chunk cost.
     let mut kept_texts: Vec<String> = Vec::with_capacity(chunk_texts.len());
     let mut kept_ranges: Vec<Option<(i64, i64)>> = Vec::with_capacity(chunk_texts.len());
     let mut kept_entities: Vec<Vec<String>> = Vec::with_capacity(chunk_texts.len());
     let mut kept_embeddings: Vec<Vec<f32>> = Vec::with_capacity(chunk_texts.len());
     let mut skipped: usize = 0;
 
-    for i in 0..chunk_texts.len() {
-        match embedder.embed(&chunk_texts[i]) {
-            Ok(emb) => {
-                kept_texts.push(chunk_texts[i].clone());
-                kept_ranges.push(line_ranges[i]);
-                kept_entities.push(entities[i].clone());
-                kept_embeddings.push(emb);
+    for window_start in (0..chunk_texts.len()).step_by(EMBED_BATCH) {
+        let window_end = (window_start + EMBED_BATCH).min(chunk_texts.len());
+        let window_refs: Vec<&str> = chunk_texts[window_start..window_end]
+            .iter()
+            .map(|s| s.as_str())
+            .collect();
+
+        match embedder.embed_batch(&window_refs) {
+            Ok(embs) => {
+                // Batch succeeded: all items in the window are kept, aligned.
+                for (offset, emb) in embs.into_iter().enumerate() {
+                    let i = window_start + offset;
+                    kept_texts.push(chunk_texts[i].clone());
+                    kept_ranges.push(line_ranges[i]);
+                    kept_entities.push(entities[i].clone());
+                    kept_embeddings.push(emb);
+                }
             }
             Err(_) => {
-                skipped += 1;
+                // Batch failed: fall back to per-chunk for this window, skip individual failures.
+                for (offset, text_ref) in window_refs.iter().enumerate() {
+                    let i = window_start + offset;
+                    match embedder.embed(text_ref) {
+                        Ok(emb) => {
+                            kept_texts.push(chunk_texts[i].clone());
+                            kept_ranges.push(line_ranges[i]);
+                            kept_entities.push(entities[i].clone());
+                            kept_embeddings.push(emb);
+                        }
+                        Err(_) => {
+                            skipped += 1;
+                        }
+                    }
+                }
             }
         }
     }
@@ -648,10 +678,13 @@ mod tests {
 
     // Test-only embedder that fails on a specific call number (1-based).
     // If `always_fail` is true, every call fails regardless of `fail_on_call`.
+    // If `batch_always_fail` is true, `embed_batch` always returns Err (simulates a poisoned
+    // batch), while per-chunk `embed` still follows the normal `fail_on_call`/`always_fail` logic.
     struct FailNthEmbedder {
         inner: crate::embed::HashEmbedder,
         fail_on_call: usize,
         always_fail: bool,
+        batch_always_fail: bool,
         calls: std::sync::atomic::AtomicUsize,
     }
 
@@ -665,6 +698,13 @@ mod tests {
                 return Err(crate::error::Error::Embed("boom".into()));
             }
             self.inner.embed(text)
+        }
+        fn embed_batch(&self, texts: &[&str]) -> crate::error::Result<Vec<Vec<f32>>> {
+            if self.batch_always_fail {
+                return Err(crate::error::Error::Embed("batch boom".into()));
+            }
+            // Default: loop through per-chunk embed.
+            texts.iter().map(|t| self.embed(t)).collect()
         }
         fn signature(&self) -> String {
             self.inner.signature()
@@ -698,10 +738,12 @@ mod tests {
         let total = pieces.len();
         assert!(total >= 2, "need ≥2 chunks for this test, got {total}");
 
+        // batch_always_fail: true forces the fallback path; per-chunk embed fails on call #2.
         let embedder = FailNthEmbedder {
             inner: crate::embed::HashEmbedder::new(32),
             fail_on_call: 2,
             always_fail: false,
+            batch_always_fail: true,
             calls: std::sync::atomic::AtomicUsize::new(0),
         };
 
@@ -745,6 +787,7 @@ mod tests {
             inner: crate::embed::HashEmbedder::new(32),
             fail_on_call: 0, // unused when always_fail is true
             always_fail: true,
+            batch_always_fail: false,
             calls: std::sync::atomic::AtomicUsize::new(0),
         };
 
@@ -760,6 +803,55 @@ mod tests {
         assert!(
             result.is_err(),
             "expected Err when all chunks fail to embed, got Ok"
+        );
+    }
+
+    /// Batch embedding fails (poisoned batch) → falls back to per-chunk → skips the one bad chunk.
+    /// A code doc yielding ≥2 chunks; `embed_batch` always returns Err; per-chunk `embed` fails
+    /// only on call #2. The doc should ingest Ok with (total - 1) stored chunks.
+    #[test]
+    fn ingest_batch_falls_back_and_skips_bad_chunk() {
+        use crate::model::{NewDoc, Taint};
+        use crate::store::Store;
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(dir.path().join("t.db").to_str().unwrap()).unwrap();
+
+        // Two 800-char lines → chunk_code produces exactly 2 chunks.
+        let line_a = "a".repeat(800);
+        let line_b = "b".repeat(800);
+        let content = format!("{line_a}\n{line_b}");
+
+        let pieces = chunk_code(&content);
+        let total = pieces.len();
+        assert!(total >= 2, "need ≥2 chunks for this test, got {total}");
+
+        // embed_batch always fails (poisoned batch), but per-chunk embed fails only on call #2.
+        let embedder = FailNthEmbedder {
+            inner: crate::embed::HashEmbedder::new(32),
+            fail_on_call: 2,
+            always_fail: false,
+            batch_always_fail: true, // force fallback path
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        };
+
+        let new = NewDoc {
+            key: "src/batch_fallback.rs".into(),
+            title: "src/batch_fallback.rs".into(),
+            content,
+            author: "bot".into(),
+            taint: Taint::Internal,
+            meta: Some(serde_json::json!({"kind": "file"})),
+        };
+        let doc = ingest_document(&store, &embedder, "ns", &new)
+            .expect("ingest_document should succeed via per-chunk fallback even when batch fails");
+
+        let rows = store.chunks_for_doc("ns", &doc.document_id).unwrap();
+        assert_eq!(
+            rows.len(),
+            total - 1,
+            "expected {} chunks (skipped 1 failed), got {}",
+            total - 1,
+            rows.len()
         );
     }
 }
