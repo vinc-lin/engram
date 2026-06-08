@@ -284,18 +284,53 @@ pub fn ingest_document(
         (texts, ranges, ents)
     };
 
-    let mut embeddings = Vec::with_capacity(chunk_texts.len());
-    for t in &chunk_texts {
-        embeddings.push(embedder.embed(t)?); // off-lock — the slow part
+    // Embed each chunk off-lock; skip any chunk whose embedding fails and warn.
+    let mut kept_texts: Vec<String> = Vec::with_capacity(chunk_texts.len());
+    let mut kept_ranges: Vec<Option<(i64, i64)>> = Vec::with_capacity(chunk_texts.len());
+    let mut kept_entities: Vec<Vec<String>> = Vec::with_capacity(chunk_texts.len());
+    let mut kept_embeddings: Vec<Vec<f32>> = Vec::with_capacity(chunk_texts.len());
+    let mut skipped: usize = 0;
+
+    for i in 0..chunk_texts.len() {
+        match embedder.embed(&chunk_texts[i]) {
+            Ok(emb) => {
+                kept_texts.push(chunk_texts[i].clone());
+                kept_ranges.push(line_ranges[i]);
+                kept_entities.push(entities[i].clone());
+                kept_embeddings.push(emb);
+            }
+            Err(_) => {
+                skipped += 1;
+            }
+        }
     }
+
+    if skipped > 0 {
+        tracing::warn!(
+            namespace = namespace,
+            key = %new.key,
+            skipped,
+            total = chunk_texts.len(),
+            "some chunks failed to embed and were skipped"
+        );
+    }
+
+    if !chunk_texts.is_empty() && kept_texts.is_empty() {
+        let n = chunk_texts.len();
+        return Err(crate::error::Error::Embed(format!(
+            "all {n} chunks failed to embed for {}",
+            new.key
+        )));
+    }
+
     let sig = embedder.signature();
     store.commit_ingest(
         namespace,
         new,
-        &chunk_texts,
-        &embeddings,
-        &entities,
-        &line_ranges,
+        &kept_texts,
+        &kept_embeddings,
+        &kept_entities,
+        &kept_ranges,
         &sig,
     )
 }
@@ -609,5 +644,122 @@ mod tests {
         assert_eq!((rows[0].line_start, rows[0].line_end), (None, None));
         assert!(rows[0].entities.contains(&"handle:bob".to_string()));
         assert!(rows[0].entities.iter().all(|e| !e.starts_with("sym:")));
+    }
+
+    // Test-only embedder that fails on a specific call number (1-based).
+    // If `always_fail` is true, every call fails regardless of `fail_on_call`.
+    struct FailNthEmbedder {
+        inner: crate::embed::HashEmbedder,
+        fail_on_call: usize,
+        always_fail: bool,
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    impl crate::embed::Embedder for FailNthEmbedder {
+        fn embed(&self, text: &str) -> crate::error::Result<Vec<f32>> {
+            let n = self
+                .calls
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                + 1;
+            if self.always_fail || n == self.fail_on_call {
+                return Err(crate::error::Error::Embed("boom".into()));
+            }
+            self.inner.embed(text)
+        }
+        fn signature(&self) -> String {
+            self.inner.signature()
+        }
+        fn dim(&self) -> usize {
+            self.inner.dim()
+        }
+    }
+
+    /// A code-mode doc whose content is long enough to produce at least 2 chunks from
+    /// `chunk_code`. The embedder fails on chunk 2; `ingest_document` should still return Ok
+    /// and store (total_chunks - 1) chunks.
+    #[test]
+    fn ingest_skips_failed_chunk() {
+        use crate::model::{NewDoc, Taint};
+        use crate::store::Store;
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(dir.path().join("t.db").to_str().unwrap()).unwrap();
+
+        // Build a code doc with content large enough to be split into ≥2 chunks by chunk_code.
+        // Each chunk_code chunk is up to MAX_CODE_CHUNK_CHARS (1500) chars; two 800-char lines
+        // guarantees exactly 2 chunks (800+1 > 1500? No: 800+800+newline = 1601 > 1500, so the
+        // second line starts a new chunk). Actually: cur = "aaa...\n" (801 chars); adding
+        // "bbb...\n" (801) would make 1602 > 1500, so flush. Two chunks.
+        let line_a = "a".repeat(800);
+        let line_b = "b".repeat(800);
+        let content = format!("{line_a}\n{line_b}");
+
+        // Verify chunk_code yields exactly 2 chunks with this content.
+        let pieces = chunk_code(&content);
+        let total = pieces.len();
+        assert!(total >= 2, "need ≥2 chunks for this test, got {total}");
+
+        let embedder = FailNthEmbedder {
+            inner: crate::embed::HashEmbedder::new(32),
+            fail_on_call: 2,
+            always_fail: false,
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        };
+
+        let new = NewDoc {
+            key: "src/big.rs".into(),
+            title: "src/big.rs".into(),
+            content,
+            author: "bot".into(),
+            taint: Taint::Internal,
+            meta: Some(serde_json::json!({"kind": "file"})),
+        };
+        let doc = ingest_document(&store, &embedder, "ns", &new)
+            .expect("ingest_document should succeed even when one chunk fails to embed");
+
+        let rows = store.chunks_for_doc("ns", &doc.document_id).unwrap();
+        assert_eq!(
+            rows.len(),
+            total - 1,
+            "expected {} chunks (skipped 1 failed), got {}",
+            total - 1,
+            rows.len()
+        );
+    }
+
+    /// A code-mode doc where EVERY chunk fails to embed. `ingest_document` should return Err.
+    #[test]
+    fn ingest_errors_when_all_chunks_fail() {
+        use crate::model::{NewDoc, Taint};
+        use crate::store::Store;
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(dir.path().join("t.db").to_str().unwrap()).unwrap();
+
+        let line_a = "a".repeat(800);
+        let line_b = "b".repeat(800);
+        let content = format!("{line_a}\n{line_b}");
+
+        let pieces = chunk_code(&content);
+        assert!(pieces.len() >= 1, "need ≥1 chunk for this test");
+
+        let embedder = FailNthEmbedder {
+            inner: crate::embed::HashEmbedder::new(32),
+            fail_on_call: 0, // unused when always_fail is true
+            always_fail: true,
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        };
+
+        let new = NewDoc {
+            key: "src/fail.rs".into(),
+            title: "src/fail.rs".into(),
+            content,
+            author: "bot".into(),
+            taint: Taint::Internal,
+            meta: Some(serde_json::json!({"kind": "file"})),
+        };
+        let result = ingest_document(&store, &embedder, "ns", &new);
+        assert!(
+            result.is_err(),
+            "expected Err when all chunks fail to embed, got Ok"
+        );
     }
 }
