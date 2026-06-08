@@ -209,10 +209,11 @@ is the seam for testing (network-free doubles) and for future backends (e.g. sel
 ## 8. Primary data flows
 
 **Ingest (write) — `POST /v1/:ns/docs`:**
-`ingest_doc` → `spawn_blocking` → `ingest::ingest_document`: `chunk()` → `embedder.embed()`
-per chunk (off-lock) → `extract_entities()` per chunk → `store.commit_ingest()` **(one
-transaction:** upsert doc, delete old chunks+entities, insert new chunks+entities, enqueue
-job**)** → returns `MemoryDoc` (201).
+`ingest_doc` → `spawn_blocking` → `ingest::ingest_document`: token-aware CJK-safe `chunk()`
+→ `embedder.embed_batch()` (batched, retry-on-transient, per-chunk tolerant — failed chunks
+are skipped so one bad chunk doesn't abort the whole doc) → `extract_entities()` per chunk →
+`store.commit_ingest()` **(one transaction:** upsert doc, delete old chunks+entities, insert
+new chunks+entities, enqueue job**)** → returns `MemoryDoc` (201).
 
 **Consolidate (cold) — background:** worker `claim_job` (atomic pending→running, attempts++)
 → `TreeProcessor.process` → `process_doc`: load doc+chunks, drop prior unsealed leaves, then
@@ -251,7 +252,7 @@ read via `get_by_key`.
 
 ---
 
-## 9. Configuration surface (`src/config.rs`, 21 vars)
+## 9. Configuration surface (`src/config.rs`, 22 vars)
 
 | Var | Default | Var | Default |
 |-----|---------|-----|---------|
@@ -265,7 +266,7 @@ read via `get_by_key`.
 | `ENGRAM_GATEWAY_KEY` | (empty) | `ENGRAM_MAX_SUMMARY_OUTPUT_TOKENS` | `5000` |
 | `ENGRAM_LLM_MODEL` | `qwen3` | `ENGRAM_LLM_PROVIDER` | `ollama` |
 | `ENGRAM_LLM_TIMEOUT_SECS` | `90` | `ENGRAM_VAULT_DIR` | (unset → vault off) |
-| `ENGRAM_AUDIT_URL` | `http://127.0.0.1:8383` | | |
+| `ENGRAM_AUDIT_URL` | `http://127.0.0.1:8383` | `ENGRAM_EMBED_TIMEOUT_SECS` | `30` |
 
 Parsing is permissive: missing/invalid values silently use the default (no validation, no
 required vars; an empty `ENGRAM_GATEWAY_KEY` is accepted).

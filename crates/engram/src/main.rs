@@ -22,6 +22,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cfg.gateway_key.clone(),
         cfg.embed_model.clone(),
         cfg.embed_dim,
+        cfg.embed_timeout_secs,
     ));
 
     let processor = Arc::new(TreeProcessor {

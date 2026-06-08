@@ -33,8 +33,9 @@ ENGRAM_DB=engram.db ENGRAM_BIND=127.0.0.1:8088 ENGRAM_TOKEN=secret cargo run
 ## Ingest & retrieval
 
 On `POST /docs`, ingest replaces the doc's prior chunks then, per chunk:
-paragraph-aware chunking (`\n\n`, packed to ~800 chars, CJK-safe), embedding, and
-mechanical entity extraction (`email:`/`url:`/`handle:`/`hashtag:`) recorded into a
+token-aware CJK-safe chunking (`\n\n`, packed to ~800 chars), batched embeddings with
+retry-on-transient (skipping any chunk that permanently fails to embed), and mechanical
+entity extraction (`email:`/`url:`/`handle:`/`hashtag:`) recorded into a
 per-namespace co-occurrence index. `query` scores each candidate doc by the best of
 its chunks: when the query shares entities with indexed docs it blends graph overlap
 + vector + keyword (weights 0.55/0.30/0.15); otherwise it falls back to vector +
@@ -64,6 +65,7 @@ Obsidian-browsable `.md`. LLM/embeddings route through the litellm gateway (gate
 | ENGRAM_GATEWAY_KEY   | (empty)                   | gateway Bearer master key          |
 | ENGRAM_EMBED_MODEL   | bge-m3                    | embedding model name at the gateway |
 | ENGRAM_EMBED_DIM     | 1024                      | Embedding vector dimension         |
+| ENGRAM_EMBED_TIMEOUT_SECS | 30                   | embed HTTP timeout (seconds)       |
 | ENGRAM_LLM_MODEL     | qwen3                     | summarizer model at the gateway    |
 | ENGRAM_OLLAMA_URL    | http://127.0.0.1:11434    | direct-Ollama base URL (only the fallback `OllamaEmbedder`, not the default path) |
 | ENGRAM_AUDIT_URL     | http://127.0.0.1:8383 | llm-audit sink                    |

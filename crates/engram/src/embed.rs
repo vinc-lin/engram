@@ -157,14 +157,20 @@ pub struct GatewayEmbedder {
 }
 
 impl GatewayEmbedder {
-    pub fn new(base_url: String, api_key: String, model: String, dim: usize) -> Self {
+    pub fn new(
+        base_url: String,
+        api_key: String,
+        model: String,
+        dim: usize,
+        timeout_secs: u64,
+    ) -> Self {
         Self {
             base_url,
             api_key,
             model,
             dim,
             client: reqwest::blocking::Client::builder()
-                .timeout(Duration::from_secs(EMBED_TIMEOUT_SECS))
+                .timeout(Duration::from_secs(timeout_secs))
                 .build()
                 .expect("build embed client"),
         }
@@ -370,6 +376,7 @@ mod tests {
             "k".into(),
             "mxbai-embed-large".into(),
             1024,
+            30,
         );
         assert_eq!(e.dim(), 1024);
         assert_eq!(e.signature(), "gateway:mxbai-embed-large:1024");
@@ -384,6 +391,7 @@ mod tests {
             key,
             "mxbai-embed-large".into(),
             1024,
+            30,
         );
         let v = e.embed("hello").unwrap();
         assert_eq!(v.len(), 1024);

@@ -6,6 +6,7 @@ pub struct Config {
     pub ollama_url: String,
     pub embed_model: String,
     pub embed_dim: usize,
+    pub embed_timeout_secs: u64,
     // Plan 4
     pub gateway_url: String,
     pub gateway_key: String,
@@ -39,6 +40,9 @@ impl Config {
             embed_dim: get("ENGRAM_EMBED_DIM")
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(1024),
+            embed_timeout_secs: get("ENGRAM_EMBED_TIMEOUT_SECS")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(30),
             gateway_url: get("ENGRAM_GATEWAY_URL")
                 .unwrap_or_else(|| "http://127.0.0.1:4000".into()),
             gateway_key: get("ENGRAM_GATEWAY_KEY").unwrap_or_default(),
@@ -90,6 +94,7 @@ mod tests {
         assert_eq!(c.ollama_url, "http://127.0.0.1:11434");
         assert_eq!(c.embed_model, "bge-m3");
         assert_eq!(c.embed_dim, 1024);
+        assert_eq!(c.embed_timeout_secs, 30);
     }
 
     #[test]
