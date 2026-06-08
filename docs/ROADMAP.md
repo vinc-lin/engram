@@ -4,9 +4,9 @@ Status and build order for engram as a **code knowledge base for coding agents**
 of truth: the spec (`docs/superpowers/specs/2026-06-07-repo-knowledge-for-coding-agents-design.md`)
 and the master plan it grew into. This file tracks *what's done and what's next*.
 
-Each phase is independently shippable. Legend: ✅ done · 🔄 done, live-validation pending · ◻️ planned.
+Each phase is independently shippable. Legend: ✅ done · 🔄 done, live-validation pending · 🚦 validation gate · ◻️ planned.
 
-_Last updated: 2026-06-08. `main` published at `github.com/vinc-lin/engram`; 138 tests green._
+_Last updated: 2026-06-09. Published at `github.com/vinc-lin/engram` (origin/main `3ab3d6f`); this roadmap revision is local, pending push._
 
 | Phase | Delivers | Status |
 |-------|----------|--------|
@@ -17,7 +17,9 @@ _Last updated: 2026-06-08. `main` published at `github.com/vinc-lin/engram`; 138
 | B — Throughput | batch embeddings | ✅ |
 | 1b — `engram-index` CLI | index / reindex / hook (write side) | ✅ |
 | 1c — `engram-mcp` server | `search_code` MCP tool (read side) | ✅ |
-| E — Validation harness | ingest-rate + recall@10 on agentmemory | 🔄 |
+| E — Validation gate | ingest-rate + recall@10 on agentmemory (unblocked; **no number measured yet**) | 🔄 🚦 |
+| F — Retrieval quality | tighten metric + fix chunking granularity + coverage (the real recall lever) | ◻️ next |
+| R — Reliability | embedder fallback; gate off code consolidation (trees no tool reads) | ◻️ |
 | 2 — Architecture digests | `get_architecture` / `get_module` | ◻️ |
 | 3a — History / rationale | `why` / `find_symbol` | ◻️ |
 | 3b — Conventions | `get_conventions` | ◻️ |
@@ -25,6 +27,31 @@ _Last updated: 2026-06-08. `main` published at `github.com/vinc-lin/engram`; 138
 
 The **MVP closed loop is complete**: `engram-index index <repo>` → engram (code-mode ingest,
 robust) → `engram-mcp search_code` → coding agent. A `post-commit` hook keeps it current.
+
+---
+
+## Findings (2026-06-09) — what a live probe + an offline A/B established
+
+These reset assumptions baked into the phases below:
+
+- **Validation is unblocked, but unmeasured.** The live deploy is healthy (451/534 docs embedded,
+  `/healthz` 200); the old "embed backend wedged" blocker was stale. Yet `recall@10 ≥ 0.80` has
+  only ever been an *expectation* — **no real number has been measured.** So E is now a **gate**,
+  not a peer line item.
+- **The bge-m3 swap is NOT a quality win (measured).** Offline A/B on the 15 gold queries — local
+  GPU bge-m3 vs the mxbai vectors already in the live DB, identical chunks — gave **mxbai
+  0.267 / 0.600 / 0.600** vs **bge-m3 0.067 / 0.333 / 0.533** (recall@1/5/10); mxbai ranked the gold
+  file better on 9 of 15 queries. A blind `mxbai → bge-m3` re-index would *lower* recall. bge-m3's
+  only un-tested upside is **coverage** of the 83 CJK files mxbai dropped (2 of which are gold and
+  absent from the corpus) — pending a full re-chunk eval. → the swap leaves the critical path.
+- **The real recall lever is chunking/coverage, not the embed model.** Both models bury the 3
+  `src/types.ts` queries at rank 41–137 (large type file, the answer isn't isolated). That's
+  granularity, and it caps recall regardless of embedder → **Phase F**.
+- **The embedder is a single point of failure.** Only `GatewayEmbedder` is wired; `OllamaEmbedder`
+  exists but isn't used; the gateway already 500'd once in prod. → wire a fallback (**Phase R**).
+- **Code consolidation runs unread.** Code ingest fans into the prose-shaped trees and fires
+  per-leaf LLM seals (6077 `tree_nodes` built), but `search_code` reads chunks directly and never
+  touches them — pure cost until Phase 2 consumes them. → gate it off (**Phase R**) until then.
 
 ---
 
@@ -76,14 +103,45 @@ Smoke-tested over stdio.
 ### Phase E — Validation on `../agentmemory` 🔄
 Committed: `eval/agentmemory_gold.json` (15 labeled NL→file queries) + `eval/validate.py`
 measuring two bars — **ingest success ≥ 0.99** and **recall@10 ≥ 0.80**.
-**Live run is pending** the embed backend (Ollama `mxbai-embed-large`) recovering — it is
-currently wedged (every query/ingest embeds). The robustness build is deployed; once the backend
-is healthy: `ENGRAM_TOKEN=… python3 eval/validate.py --index --repo <path/to/agentmemory>`.
-Expectation: ingest 84% → ~100%; recall@10 ≥ 0.8.
+**Unblocked — the live deploy is healthy** (engram up on `127.0.0.1:8088`, `/healthz` → 200; the
+earlier "embed backend wedged" note was stale). Embeddings route through the **litellm gateway**
+(`mxbai-embed-large`, returning 200) — not a direct Ollama, as the old note implied. The live
+namespace `repo:agentmemory` currently holds **451/534 docs (84%) fully embedded** under
+`gateway:mxbai-embed-large:1024` — the pre-robustness ingest; a clean re-index with the robust
+build should lift it to ~100%. Run:
+`ENGRAM_TOKEN=… python3 eval/validate.py --index --repo <path/to/agentmemory>` (omit `--index` to
+score the already-embedded corpus). Expectation: ingest 84% → ~100%; recall@10 ≥ 0.8 — **no real
+number has been measured yet.**
+**E is now a gate:** no phase past F starts until E reports a real PASS on a tightened bar; the
+metric-tightening work itself lives in Phase F.
 
 ---
 
 ## Planned
+
+### Phase F — Retrieval quality (next) ◻️
+The 2026-06-09 A/B showed recall is capped by chunking + coverage, not the embed model. Three moves:
+- **Tighten the metric** — add `recall@5` as the headline bar (top-10 of ~1.9k chunks is lenient),
+  score **line-range hits** (does the matched chunk's span contain the answer?) not whole-chunk
+  hits, and de-dupe/expand the gold set (today 3 of 15 queries collapse onto `src/types.ts`; ~10
+  distinct files) to ~30 queries at ≤ 2/file + a hard-negatives bucket.
+- **Fix granularity** — large type/definition files (`types.ts`) bury specific answers; smaller or
+  symbol-aware chunks (a down-payment on Phase 4's tree-sitter) should lift the buried queries.
+- **Coverage** — re-index agentmemory with the robust build to recover the 83 dropped files
+  (84% → ~100%), then re-measure. *(Optional: a full re-chunk bge-m3 eval to settle its coverage
+  upside — the one bge-m3 advantage the drop-in A/B couldn't test.)*
+Bar: tightened `recall@5 ≥ 0.80` on the expanded gold set; ingest ≥ 0.99.
+
+### Phase R — Reliability & foundations ◻️
+Cheap, high-leverage substrate fixes, all using code that already exists:
+- **Embedder fallback** — wire the existing `OllamaEmbedder` behind `GatewayEmbedder` (a single
+  stable `signature()` to avoid orphaning reads on failover) + a startup embed-reachability probe.
+  Neutralizes the verified gateway-500 outage class.
+- **Gate code consolidation off** (`ENGRAM_CONSOLIDATE_CODE`, default off) — `search_code` never
+  reads the trees; stop paying per-leaf LLM seals until Phase 2 ships a consumer.
+- **Fix/remove the crash-looping reverse tunnel** (placeholder `gateway.example` / missing key) so
+  "deploy is healthy" is honest.
+*(The bge-m3 swap — once expected here / in Phase 4 — is **deprioritized by evidence**; see Findings.)*
 
 ### Phase 2 — Architecture digests ◻️
 Code-tuned consolidation: fan code leaves into `module` (by directory) and `global` trees +
@@ -104,12 +162,14 @@ Bar: ≥ ~10 distinct conventions, each spot-checked correct (no fabrication).
 
 ### Phase 4 — Depth ◻️
 Tree-sitter function-boundary chunking + richer symbols (better `find_symbol` precision);
-reseal-stale-digests pass; more languages; embedder-aware token budget (e.g. bge-m3's 8k vs
-mxbai's 512, instead of the conservative const).
+reseal-stale-digests pass; more languages. Embedder-aware token budget stays here **only if** a
+future model swap is justified — the 2026-06-09 A/B found bge-m3 does *not* beat mxbai as a
+drop-in, so the swap is no longer assumed (see Findings / Phase F).
 
 ### Headline success criterion
 With-vs-without: an agent using the MCP tools scores higher on a fixed engram-question suite than
-without them. Measurable once 2/3 add the richer tools on top of today's `search_code`.
+without them. Depends on **E** producing a real baseline first; meaningfully measurable once 2/3
+add the richer tools on top of today's `search_code`.
 
 ---
 
@@ -127,9 +187,15 @@ without them. Measurable once 2/3 add the richer tools on top of today's `search
 - **Digest freshness** — sealed digests trail recent edits until re-seal; `search_code` is always
   current. **Symbol precision** — regex-approximate until tree-sitter.
 - **Consolidation/embedding cost on large repos** — pace indexing (engram-index bounds concurrency
-  + retries; batch embeds); a bulk ingest can still saturate a single local embed backend.
+  + retries; batch embeds); a bulk ingest can still saturate the single embed backend. **Code
+  consolidation currently runs unread** (`search_code` never touches trees) — Phase R gates it off.
+- **Embedder is a single point of failure** — only `GatewayEmbedder` is wired (the gateway 500'd
+  once in prod); `OllamaEmbedder` exists but isn't used. Phase R wires the fallback.
 
 ## Operational
 - `main` (public, scrubbed identity) is the working branch; `master` is the full-history local
   backup. The deploy runs `target/release/engram` via `deploy/run.sh` (screen + reverse tunnel);
   LLM summaries route to DeepSeek, embeddings to the gateway's `mxbai-embed-large`.
+- The gateway has a `bge-m3` entry but it's **misrouted** (→ an Ollama host without bge-m3 → 500);
+  a working bge-m3 exists only as a local GPU venv (`~/bge-m3`). The reverse tunnel is currently
+  **crash-looping** on placeholder config — engram itself is unaffected (loopback bind).
