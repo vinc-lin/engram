@@ -13,9 +13,54 @@ const MAX_CHUNK_CHARS: usize = 800;
 /// Max characters per code chunk (code packs by line, not paragraph).
 const MAX_CODE_CHUNK_CHARS: usize = 1500;
 
-/// Code-aware chunking: pack consecutive lines up to a char cap, never splitting a line.
-/// Returns `(chunk_text, start_line, end_line)` with 1-based inclusive line numbers. A single
-/// line longer than the cap becomes its own chunk (line boundaries are always respected).
+/// Token budget for code chunks — conservatively below the embed-model's 512-token ceiling.
+/// Each emitted chunk must have `estimate_tokens(text) <= CODE_CHUNK_TOKEN_BUDGET`.
+/// Could become embedder-aware in a future refactor (e.g. passed in from `GatewayEmbedder`).
+const CODE_CHUNK_TOKEN_BUDGET: usize = 480;
+
+/// Returns true if the character is in a CJK range (Unified Ideographs, Hiragana, Katakana,
+/// Hangul Syllables). Used by both `estimate_tokens` and `chunk_code`.
+#[inline]
+fn is_cjk(c: char) -> bool {
+    matches!(c,
+        '\u{4E00}'..='\u{9FFF}'   // CJK Unified Ideographs
+        | '\u{3040}'..='\u{309F}' // Hiragana
+        | '\u{30A0}'..='\u{30FF}' // Katakana
+        | '\u{AC00}'..='\u{D7AF}' // Hangul Syllables
+    )
+}
+
+/// Heuristic token estimator: CJK characters (Unified Ideographs, Hiragana, Katakana, Hangul)
+/// are each ≈1 token; all other characters are ≈0.25 token. Returns
+/// `cjk_count + ceil(non_cjk_count / 4)`.
+pub fn estimate_tokens(s: &str) -> usize {
+    let mut cjk = 0usize;
+    let mut other = 0usize;
+    for c in s.chars() {
+        if is_cjk(c) {
+            cjk += 1;
+        } else {
+            other += 1;
+        }
+    }
+    cjk + other.div_ceil(4)
+}
+
+/// Code-aware chunking: pack consecutive lines up to a char cap and a token budget, never
+/// splitting a line unless a single CJK-heavy line itself exceeds the token budget.
+/// Returns `(chunk_text, start_line, end_line)` with 1-based inclusive line numbers.
+///
+/// Flush rules when packing:
+///   - If adding a line would exceed `MAX_CODE_CHUNK_CHARS` chars OR `CODE_CHUNK_TOKEN_BUDGET`
+///     estimated tokens, flush the current buffer first.
+///
+/// Oversized CJK-line rule:
+///   - If a single line contains CJK characters AND its token estimate exceeds
+///     `CODE_CHUNK_TOKEN_BUDGET`, it is hard-split on character boundaries into consecutive
+///     pieces, each within budget. All pieces share the same `(start_line, end_line)`.
+///   - Pure-ASCII lines that exceed the char cap continue to be emitted as a single chunk
+///     (preserving prior behavior — the char cap dominates for ASCII content since
+///     1500 chars ≈ 375 ASCII tokens, well below the 480-token budget).
 pub fn chunk_code(content: &str) -> Vec<(String, usize, usize)> {
     let mut out: Vec<(String, usize, usize)> = Vec::new();
     let mut cur = String::new();
@@ -23,19 +68,58 @@ pub fn chunk_code(content: &str) -> Vec<(String, usize, usize)> {
     let mut cur_lines = 0usize;
     let mut line_no = 0usize;
 
+    let flush = |cur: &mut String,
+                 cur_lines: &mut usize,
+                 cur_start: usize,
+                 end: usize,
+                 out: &mut Vec<(String, usize, usize)>| {
+        if *cur_lines > 0 {
+            out.push((std::mem::take(cur), cur_start, end));
+            *cur_lines = 0;
+        }
+    };
+
     for line in content.lines() {
         line_no += 1;
-        let add_len = line.chars().count() + 1; // +1 for the newline we append
-        if cur_lines > 0 && cur.chars().count() + add_len > MAX_CODE_CHUNK_CHARS {
-            out.push((std::mem::take(&mut cur), cur_start, line_no - 1));
-            cur_lines = 0;
+        let line_chars = line.chars().count();
+        let line_tokens = estimate_tokens(line);
+        let line_has_cjk = line.chars().any(is_cjk);
+
+        if line_has_cjk && line_tokens > CODE_CHUNK_TOKEN_BUDGET {
+            // Hard-split the oversized CJK line; flush any accumulated buffer first.
+            flush(&mut cur, &mut cur_lines, cur_start, line_no - 1, &mut out);
+
+            // Greedily accumulate characters into pieces, flushing each time adding the next
+            // character would bring the piece to the budget.
+            let mut piece = String::new();
+            for ch in line.chars() {
+                piece.push(ch);
+                if estimate_tokens(&piece) >= CODE_CHUNK_TOKEN_BUDGET {
+                    out.push((std::mem::take(&mut piece), line_no, line_no));
+                }
+            }
+            if !piece.is_empty() {
+                out.push((piece, line_no, line_no));
+            }
+            cur_start = line_no + 1;
+        } else {
+            // Normal line (ASCII, or CJK within budget): check both caps before packing.
+            let add_char_len = line_chars + 1; // +1 for the newline we append
+            let would_exceed_chars =
+                cur_lines > 0 && cur.chars().count() + add_char_len > MAX_CODE_CHUNK_CHARS;
+            let would_exceed_tokens =
+                cur_lines > 0 && estimate_tokens(&cur) + line_tokens > CODE_CHUNK_TOKEN_BUDGET;
+
+            if would_exceed_chars || would_exceed_tokens {
+                flush(&mut cur, &mut cur_lines, cur_start, line_no - 1, &mut out);
+            }
+            if cur_lines == 0 {
+                cur_start = line_no;
+            }
+            cur.push_str(line);
+            cur.push('\n');
+            cur_lines += 1;
         }
-        if cur_lines == 0 {
-            cur_start = line_no;
-        }
-        cur.push_str(line);
-        cur.push('\n');
-        cur_lines += 1;
     }
     if cur_lines > 0 {
         out.push((cur, cur_start, line_no));
@@ -437,6 +521,70 @@ mod tests {
             .entities
             .contains(&"import:crate::store::Store".to_string()));
         assert!(rows[0].entities.contains(&"path:src/lib.rs".to_string()));
+    }
+
+    #[test]
+    fn estimate_tokens_counts_cjk_heavier() {
+        // Pure CJK: each char ≈ 1 token
+        let cjk = "漫画作品の"; // 5 CJK chars
+        let t = estimate_tokens(cjk);
+        assert!(
+            t >= 4 && t <= 6,
+            "CJK token estimate should be near char count, got {t}"
+        );
+
+        // Pure ASCII: ≈ chars/4
+        let ascii = "hello world!!!"; // 14 chars
+        let t2 = estimate_tokens(ascii);
+        assert!(
+            t2 >= 3 && t2 <= 5,
+            "ASCII token estimate should be ~chars/4, got {t2}"
+        );
+
+        // Mixed: large CJK string
+        let cjk_long = "漫".repeat(480); // 480 CJK chars → ~480 tokens
+        let t3 = estimate_tokens(&cjk_long);
+        assert!(t3 >= 475 && t3 <= 485, "expected ~480, got {t3}");
+    }
+
+    #[test]
+    fn chunk_code_cjk_stays_within_token_budget() {
+        // Build a long CJK string across many lines, each line ~100 CJK chars
+        let line = "語".repeat(100); // 100 CJK = ~100 tokens per line
+        let content: String = (0..30)
+            .map(|_| line.as_str())
+            .collect::<Vec<_>>()
+            .join("\n"); // 30 lines, 3000 total CJK chars
+        let out = chunk_code(&content);
+        assert!(!out.is_empty());
+        for (text, _s, _e) in &out {
+            let tokens = estimate_tokens(text);
+            assert!(
+                tokens <= CODE_CHUNK_TOKEN_BUDGET,
+                "chunk has {tokens} tokens, exceeds budget {CODE_CHUNK_TOKEN_BUDGET}"
+            );
+        }
+    }
+
+    #[test]
+    fn chunk_code_oversized_cjk_line_is_split() {
+        // Single line of 2000 CJK chars — no newlines
+        let line = "字".repeat(2000);
+        let out = chunk_code(&line);
+        assert!(
+            out.len() > 1,
+            "expected multiple chunks for oversized CJK line, got {}",
+            out.len()
+        );
+        for (text, s, e) in &out {
+            assert_eq!(*s, 1, "start_line should be 1");
+            assert_eq!(*e, 1, "end_line should be 1");
+            let tokens = estimate_tokens(text);
+            assert!(
+                tokens <= CODE_CHUNK_TOKEN_BUDGET,
+                "split piece has {tokens} tokens, exceeds budget"
+            );
+        }
     }
 
     #[test]
