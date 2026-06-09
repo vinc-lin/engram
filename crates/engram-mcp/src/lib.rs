@@ -460,6 +460,14 @@ pub fn dispatch(req: &Value, backend: &dyn CodeSearch) -> Option<Value> {
     }
 }
 
+/// Parse one JSON-RPC message string, dispatch it, and serialize the response. Returns `None` for
+/// notifications (no `id`) and for unparseable input. Shared by the stdio + HTTP transports.
+pub fn handle_message(raw: &str, backend: &dyn CodeSearch) -> Option<String> {
+    let req: Value = serde_json::from_str(raw.trim()).ok()?;
+    let resp = dispatch(&req, backend)?;
+    serde_json::to_string(&resp).ok()
+}
+
 // ---------------------------------------------------------------------------
 // Unit tests
 // ---------------------------------------------------------------------------
@@ -716,6 +724,19 @@ mod tests {
         });
         let resp = dispatch(&req, &no_hits()).unwrap();
         assert_eq!(resp["error"]["code"], -32601);
+    }
+
+    #[test]
+    fn handle_message_dispatches_and_serializes() {
+        let out = handle_message(
+            r#"{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}"#,
+            &no_hits(),
+        )
+        .unwrap();
+        assert!(out.contains("search_code") && out.contains("get_conventions"));
+        // A notification (no id) yields no response; bad JSON too.
+        assert!(handle_message(r#"{"jsonrpc":"2.0","method":"x"}"#, &no_hits()).is_none());
+        assert!(handle_message("not json", &no_hits()).is_none());
     }
 
     #[test]
