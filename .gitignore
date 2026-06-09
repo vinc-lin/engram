@@ -3,3 +3,6 @@
 *.db-wal
 *.db-shm
 .env
+eval/runs/
+__pycache__/
+*.pyc

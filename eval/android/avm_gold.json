@@ -1,0 +1,2864 @@
+{
+  "datasets": [
+    {
+      "namespace": "repo:ndk-samples",
+      "repo": "~/engram-eval/proxies/ndk-samples",
+      "languages": [
+        "C++",
+        "C",
+        "Java",
+        "Kotlin",
+        "CMake",
+        "Gradle"
+      ],
+      "features": [
+        {
+          "id": "camera-basic-native-activity",
+          "task": "Migrate the NativeActivity-based NDK camera preview (camera/basic) to a new project: find every file that must change.",
+          "footprint": [
+            {
+              "path": "camera/basic/src/main/cpp/android_main.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "camera/basic/src/main/cpp/camera_engine.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "camera/basic/src/main/cpp/camera_engine.h",
+              "layer": "native"
+            },
+            {
+              "path": "camera/basic/src/main/cpp/camera_manager.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "camera/basic/src/main/cpp/camera_manager.h",
+              "layer": "native"
+            },
+            {
+              "path": "camera/basic/src/main/cpp/camera_listeners.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "camera/basic/src/main/cpp/image_reader.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "camera/basic/src/main/cpp/image_reader.h",
+              "layer": "native"
+            },
+            {
+              "path": "camera/basic/src/main/cpp/camera_ui.cpp",
+              "layer": "jni"
+            },
+            {
+              "path": "camera/basic/src/main/cpp/CMakeLists.txt",
+              "layer": "build"
+            },
+            {
+              "path": "camera/basic/src/main/java/com/sample/camera/basic/CameraActivity.java",
+              "layer": "app"
+            },
+            {
+              "path": "camera/basic/src/main/AndroidManifest.xml",
+              "layer": "app"
+            },
+            {
+              "path": "camera/basic/src/main/res/layout/widgets.xml",
+              "layer": "app"
+            },
+            {
+              "path": "camera/basic/build.gradle",
+              "layer": "build"
+            },
+            {
+              "path": "camera/camera-utils/src/main/cpp/camera_utils.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "camera/camera-utils/src/main/cpp/include/ndksamples/camera/camera_utils.h",
+              "layer": "native"
+            },
+            {
+              "path": "camera/camera-utils/src/main/cpp/include/ndksamples/camera/native_debug.h",
+              "layer": "native"
+            },
+            {
+              "path": "camera/camera-utils/src/main/cpp/CMakeLists.txt",
+              "layer": "build"
+            },
+            {
+              "path": "camera/camera-utils/build.gradle.kts",
+              "layer": "build"
+            }
+          ]
+        },
+        {
+          "id": "camera-texture-view",
+          "task": "Migrate the TextureView-based NDK camera preview (camera/texture-view) to a new project: find every file that must change.",
+          "footprint": [
+            {
+              "path": "camera/texture-view/src/main/cpp/android_main.cpp",
+              "layer": "jni"
+            },
+            {
+              "path": "camera/texture-view/src/main/cpp/camera_engine.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "camera/texture-view/src/main/cpp/camera_engine.h",
+              "layer": "native"
+            },
+            {
+              "path": "camera/texture-view/src/main/cpp/camera_manager.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "camera/texture-view/src/main/cpp/camera_manager.h",
+              "layer": "native"
+            },
+            {
+              "path": "camera/texture-view/src/main/cpp/camera_listeners.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "camera/texture-view/src/main/cpp/CMakeLists.txt",
+              "layer": "build"
+            },
+            {
+              "path": "camera/texture-view/src/main/java/com/sample/textureview/ViewActivity.java",
+              "layer": "app"
+            },
+            {
+              "path": "camera/texture-view/src/main/AndroidManifest.xml",
+              "layer": "app"
+            },
+            {
+              "path": "camera/texture-view/src/main/res/layout/activity_main.xml",
+              "layer": "app"
+            },
+            {
+              "path": "camera/texture-view/build.gradle",
+              "layer": "build"
+            },
+            {
+              "path": "camera/camera-utils/src/main/cpp/camera_utils.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "camera/camera-utils/src/main/cpp/include/ndksamples/camera/camera_utils.h",
+              "layer": "native"
+            },
+            {
+              "path": "camera/camera-utils/src/main/cpp/include/ndksamples/camera/native_debug.h",
+              "layer": "native"
+            },
+            {
+              "path": "camera/camera-utils/src/main/cpp/CMakeLists.txt",
+              "layer": "build"
+            },
+            {
+              "path": "camera/camera-utils/build.gradle.kts",
+              "layer": "build"
+            }
+          ]
+        },
+        {
+          "id": "gles3-jni-renderer",
+          "task": "Migrate the OpenGL ES 3 JNI renderer (gles3jni) to a new project: find every file that must change.",
+          "footprint": [
+            {
+              "path": "gles3jni/app/src/main/cpp/gles3jni.cpp",
+              "layer": "jni"
+            },
+            {
+              "path": "gles3jni/app/src/main/cpp/gles3jni.h",
+              "layer": "native"
+            },
+            {
+              "path": "gles3jni/app/src/main/cpp/RendererES2.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "gles3jni/app/src/main/cpp/RendererES3.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "gles3jni/app/src/main/java/com/android/gles3jni/GLES3JNIActivity.java",
+              "layer": "app"
+            },
+            {
+              "path": "gles3jni/app/src/main/java/com/android/gles3jni/GLES3JNILib.java",
+              "layer": "app"
+            },
+            {
+              "path": "gles3jni/app/src/main/java/com/android/gles3jni/GLES3JNIView.java",
+              "layer": "app"
+            },
+            {
+              "path": "gles3jni/app/src/main/AndroidManifest.xml",
+              "layer": "app"
+            },
+            {
+              "path": "gles3jni/app/build.gradle",
+              "layer": "build"
+            }
+          ]
+        },
+        {
+          "id": "camera-shared-utils-library",
+          "task": "Migrate the shared NDK camera utility library (camera-utils prefab) to a new project: find every file that must change.",
+          "footprint": [
+            {
+              "path": "camera/camera-utils/src/main/cpp/camera_utils.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "camera/camera-utils/src/main/cpp/include/ndksamples/camera/camera_utils.h",
+              "layer": "native"
+            },
+            {
+              "path": "camera/camera-utils/src/main/cpp/include/ndksamples/camera/native_debug.h",
+              "layer": "native"
+            },
+            {
+              "path": "camera/camera-utils/src/main/cpp/CMakeLists.txt",
+              "layer": "build"
+            },
+            {
+              "path": "camera/camera-utils/build.gradle.kts",
+              "layer": "build"
+            }
+          ]
+        },
+        {
+          "id": "hello-vulkan",
+          "task": "Migrate the hello-vulkan sample to a new project: find every file that must change.",
+          "footprint": [
+            {
+              "path": "hello-vulkan/app/src/main/cpp/vk_main.cpp",
+              "layer": "jni"
+            },
+            {
+              "path": "hello-vulkan/app/src/main/cpp/hellovk.h",
+              "layer": "native"
+            },
+            {
+              "path": "hello-vulkan/app/src/main/java/com/android/hellovk/VulkanActivity.kt",
+              "layer": "app"
+            },
+            {
+              "path": "hello-vulkan/app/src/main/AndroidManifest.xml",
+              "layer": "app"
+            },
+            {
+              "path": "hello-vulkan/app/build.gradle",
+              "layer": "build"
+            }
+          ]
+        }
+      ],
+      "queries": [
+        {
+          "q": "Where is the AImageReader created and configured for YUV frame capture in the basic NDK camera sample?",
+          "gold": [
+            "camera/basic/src/main/cpp/image_reader.cpp"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "camera-basic-native-activity",
+          "gold_lines": [
+            {
+              "file": "camera/basic/src/main/cpp/image_reader.cpp",
+              "line_range": [
+                59,
+                73
+              ]
+            }
+          ]
+        },
+        {
+          "q": "How does the native camera layer call back into Java to notify that a photo has been saved?",
+          "gold": [
+            "camera/basic/src/main/cpp/camera_ui.cpp"
+          ],
+          "lang": "cpp",
+          "layer": "jni",
+          "feature": "camera-basic-native-activity",
+          "gold_lines": [
+            {
+              "file": "camera/basic/src/main/cpp/camera_ui.cpp",
+              "line_range": [
+                95,
+                107
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Where are JNI native methods registered for the CameraActivity class in the basic camera sample?",
+          "gold": [
+            "camera/basic/src/main/cpp/camera_ui.cpp"
+          ],
+          "lang": "cpp",
+          "layer": "jni",
+          "feature": "camera-basic-native-activity",
+          "gold_lines": [
+            {
+              "file": "camera/basic/src/main/cpp/camera_ui.cpp",
+              "line_range": [
+                151,
+                172
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Which Java class requests the CAMERA permission at runtime and how does it pass the result to native code?",
+          "gold": [
+            "camera/basic/src/main/java/com/sample/camera/basic/CameraActivity.java"
+          ],
+          "lang": "java",
+          "layer": "app",
+          "feature": "camera-basic-native-activity",
+          "gold_lines": [
+            {
+              "file": "camera/basic/src/main/java/com/sample/camera/basic/CameraActivity.java",
+              "line_range": [
+                186,
+                236
+              ]
+            }
+          ]
+        },
+        {
+          "q": "How does the texture-view camera sample pass a Java Surface object to native code to start preview?",
+          "gold": [
+            "camera/texture-view/src/main/java/com/sample/textureview/ViewActivity.java"
+          ],
+          "lang": "java",
+          "layer": "app",
+          "feature": "camera-texture-view",
+          "gold_lines": [
+            {
+              "file": "camera/texture-view/src/main/java/com/sample/textureview/ViewActivity.java",
+              "line_range": [
+                106,
+                115
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Where is ANativeWindow obtained from a Java Surface object in the texture-view NDK camera sample?",
+          "gold": [
+            "camera/texture-view/src/main/cpp/camera_engine.cpp"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "camera-texture-view",
+          "gold_lines": [
+            {
+              "file": "camera/texture-view/src/main/cpp/camera_engine.cpp",
+              "line_range": [
+                57,
+                60
+              ]
+            }
+          ]
+        },
+        {
+          "q": "How are JNI native methods registered for the ViewActivity class (texture-view camera)?",
+          "gold": [
+            "camera/texture-view/src/main/cpp/android_main.cpp"
+          ],
+          "lang": "cpp",
+          "layer": "jni",
+          "feature": "camera-texture-view",
+          "gold_lines": [
+            {
+              "file": "camera/texture-view/src/main/cpp/android_main.cpp",
+              "line_range": [
+                147,
+                171
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Which function selects the best camera preview resolution matching the display aspect ratio in NDKCamera?",
+          "gold": [
+            "camera/basic/src/main/cpp/camera_manager.cpp"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "camera-basic-native-activity",
+          "gold_lines": [
+            {
+              "file": "camera/basic/src/main/cpp/camera_manager.cpp",
+              "line_range": [
+                166,
+                222
+              ]
+            }
+          ]
+        },
+        {
+          "q": "How does the NDK camera sample open the back-facing camera device and register availability callbacks?",
+          "gold": [
+            "camera/basic/src/main/cpp/camera_manager.cpp"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "camera-basic-native-activity",
+          "gold_lines": [
+            {
+              "file": "camera/basic/src/main/cpp/camera_manager.cpp",
+              "line_range": [
+                36,
+                98
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Where is the capture session created and the repeating preview request started in the NDK camera sample?",
+          "gold": [
+            "camera/basic/src/main/cpp/camera_manager.cpp"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "camera-basic-native-activity",
+          "gold_lines": [
+            {
+              "file": "camera/basic/src/main/cpp/camera_manager.cpp",
+              "line_range": [
+                224,
+                265
+              ]
+            }
+          ]
+        },
+        {
+          "q": "How is YUV_420_888 camera frame data converted to RGBA and written to the ANativeWindow buffer?",
+          "gold": [
+            "camera/basic/src/main/cpp/image_reader.cpp"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "camera-basic-native-activity",
+          "gold_lines": [
+            {
+              "file": "camera/basic/src/main/cpp/image_reader.cpp",
+              "line_range": [
+                172,
+                282
+              ]
+            }
+          ]
+        },
+        {
+          "q": "How is the camera frame rendered per-frame in the native activity main loop (camera/basic)?",
+          "gold": [
+            "camera/basic/src/main/cpp/camera_engine.cpp"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "camera-basic-native-activity",
+          "gold_lines": [
+            {
+              "file": "camera/basic/src/main/cpp/camera_engine.cpp",
+              "line_range": [
+                155,
+                172
+              ]
+            }
+          ]
+        },
+        {
+          "q": "What is the entry point for the native activity in camera/basic and how does it handle window lifecycle events?",
+          "gold": [
+            "camera/basic/src/main/cpp/android_main.cpp"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "camera-basic-native-activity",
+          "gold_lines": [
+            {
+              "file": "camera/basic/src/main/cpp/android_main.cpp",
+              "line_range": [
+                60,
+                81
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Where is camera sensor orientation queried from the NDK metadata to compute correct image rotation?",
+          "gold": [
+            "camera/basic/src/main/cpp/camera_manager.cpp"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "camera-basic-native-activity",
+          "gold_lines": [
+            {
+              "file": "camera/basic/src/main/cpp/camera_manager.cpp",
+              "line_range": [
+                354,
+                377
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Which CMakeLists.txt links camera2ndk and mediandk for the basic NDK camera sample and what source files are compiled?",
+          "gold": [
+            "camera/basic/src/main/cpp/CMakeLists.txt"
+          ],
+          "lang": "build",
+          "layer": "build",
+          "feature": "camera-basic-native-activity",
+          "gold_lines": [
+            {
+              "file": "camera/basic/src/main/cpp/CMakeLists.txt",
+              "line_range": [
+                17,
+                47
+              ]
+            }
+          ]
+        },
+        {
+          "q": "What CAMERA permission and hardware features are declared in the AndroidManifest of the basic camera sample?",
+          "gold": [
+            "camera/basic/src/main/AndroidManifest.xml"
+          ],
+          "lang": "other",
+          "layer": "app",
+          "feature": "camera-basic-native-activity",
+          "gold_lines": []
+        },
+        {
+          "q": "Where are the CALL_MGR / CALL_SESSION / CALL_REQUEST macro wrappers for NDK camera API calls defined?",
+          "gold": [
+            "camera/camera-utils/src/main/cpp/include/ndksamples/camera/camera_utils.h"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "camera-shared-utils-library",
+          "gold_lines": []
+        },
+        {
+          "q": "How does the camera-utils library expose its headers as a prefab package in the Gradle build?",
+          "gold": [
+            "camera/camera-utils/build.gradle.kts"
+          ],
+          "lang": "build",
+          "layer": "build",
+          "feature": "camera-shared-utils-library",
+          "gold_lines": []
+        },
+        {
+          "q": "How does the texture-view sample resize the TextureView to match the camera preview aspect ratio and apply a rotation transform?",
+          "gold": [
+            "camera/texture-view/src/main/java/com/sample/textureview/ViewActivity.java"
+          ],
+          "lang": "java",
+          "layer": "app",
+          "feature": "camera-texture-view",
+          "gold_lines": [
+            {
+              "file": "camera/texture-view/src/main/java/com/sample/textureview/ViewActivity.java",
+              "line_range": [
+                117,
+                171
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Where is the NDKCamera class for the texture-view sample declared, and how does its MatchCaptureSizeRequest signature differ from the basic sample?",
+          "gold": [
+            "camera/texture-view/src/main/cpp/camera_manager.h"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "camera-texture-view",
+          "gold_lines": [
+            {
+              "file": "camera/texture-view/src/main/cpp/camera_manager.h",
+              "line_range": [
+                78,
+                154
+              ]
+            }
+          ]
+        },
+        {
+          "q": "How does the basic camera sample pass exposure and sensitivity parameters from the native side to the Java SeekBar UI?",
+          "gold": [
+            "camera/basic/src/main/cpp/camera_ui.cpp"
+          ],
+          "lang": "cpp",
+          "layer": "jni",
+          "feature": "camera-basic-native-activity",
+          "gold_lines": [
+            {
+              "file": "camera/basic/src/main/cpp/camera_ui.cpp",
+              "line_range": [
+                58,
+                83
+              ]
+            }
+          ]
+        },
+        {
+          "q": "How is the NdkCamera capture session state machine (READY/ACTIVE/CLOSED) updated via session callbacks?",
+          "gold": [
+            "camera/basic/src/main/cpp/camera_listeners.cpp"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "camera-basic-native-activity",
+          "gold_lines": [
+            {
+              "file": "camera/basic/src/main/cpp/camera_listeners.cpp",
+              "line_range": [
+                150,
+                175
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Where is ACameraDevice_stateCallbacks constructed and which function handles camera device disconnect?",
+          "gold": [
+            "camera/basic/src/main/cpp/camera_listeners.cpp"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "camera-basic-native-activity",
+          "gold_lines": [
+            {
+              "file": "camera/basic/src/main/cpp/camera_listeners.cpp",
+              "line_range": [
+                64,
+                101
+              ]
+            }
+          ]
+        },
+        {
+          "q": "How does the GLES3JNI sample register its JNI methods and dispatch render calls from the Java Renderer to native?",
+          "gold": [
+            "gles3jni/app/src/main/cpp/gles3jni.cpp"
+          ],
+          "lang": "cpp",
+          "layer": "jni",
+          "feature": "gles3-jni-renderer",
+          "gold_lines": [
+            {
+              "file": "gles3jni/app/src/main/cpp/gles3jni.cpp",
+              "line_range": [
+                268,
+                286
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Which Java class sets up the EGL context (version 3) and GLSurfaceView for the GLES3JNI sample?",
+          "gold": [
+            "gles3jni/app/src/main/java/com/android/gles3jni/GLES3JNIView.java"
+          ],
+          "lang": "java",
+          "layer": "app",
+          "feature": "gles3-jni-renderer",
+          "gold_lines": [
+            {
+              "file": "gles3jni/app/src/main/java/com/android/gles3jni/GLES3JNIView.java",
+              "line_range": [
+                33,
+                59
+              ]
+            }
+          ]
+        },
+        {
+          "q": "How does the camera/basic sample enumerate back-facing cameras using ACameraManager?",
+          "gold": [
+            "camera/basic/src/main/cpp/camera_manager.cpp"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "camera-basic-native-activity",
+          "gold_lines": [
+            {
+              "file": "camera/basic/src/main/cpp/camera_manager.cpp",
+              "line_range": [
+                308,
+                346
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Where is the ImageReader class declared and what methods does it expose for acquiring and displaying frames?",
+          "gold": [
+            "camera/basic/src/main/cpp/image_reader.h"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "camera-basic-native-activity",
+          "gold_lines": [
+            {
+              "file": "camera/basic/src/main/cpp/image_reader.h",
+              "line_range": [
+                34,
+                116
+              ]
+            }
+          ]
+        },
+        {
+          "q": "How does the camera/basic sample write a captured JPEG image to the device filesystem from native code?",
+          "gold": [
+            "camera/basic/src/main/cpp/image_reader.cpp"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "camera-basic-native-activity",
+          "gold_lines": [
+            {
+              "file": "camera/basic/src/main/cpp/image_reader.cpp",
+              "line_range": [
+                414,
+                458
+              ]
+            }
+          ]
+        },
+        {
+          "q": "What Gradle dependencies and prefab configuration does camera/basic use to consume the camera-utils shared library?",
+          "gold": [
+            "camera/basic/build.gradle"
+          ],
+          "lang": "build",
+          "layer": "build",
+          "feature": "camera-basic-native-activity",
+          "gold_lines": []
+        },
+        {
+          "q": "Which file translates NDK camera_status_t error codes into human-readable strings for logging?",
+          "gold": [
+            "camera/camera-utils/src/main/cpp/camera_utils.cpp"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "camera-shared-utils-library",
+          "gold_lines": []
+        },
+        {
+          "q": "How does the texture-view sample's native JNI layer return an android.util.Size object back to Java for preview sizing?",
+          "gold": [
+            "camera/texture-view/src/main/cpp/android_main.cpp"
+          ],
+          "lang": "cpp",
+          "layer": "jni",
+          "feature": "camera-texture-view",
+          "gold_lines": [
+            {
+              "file": "camera/texture-view/src/main/cpp/android_main.cpp",
+              "line_range": [
+                87,
+                99
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Where does the NDKCamera constructor read ACAMERA_SENSOR_INFO_EXPOSURE_TIME_RANGE and clamp the exposure range?",
+          "gold": [
+            "camera/basic/src/main/cpp/camera_manager.cpp"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "camera-basic-native-activity",
+          "gold_lines": []
+        },
+        {
+          "q": "How does the GLES3JNI renderer choose between an ES2 and ES3 rendering path at runtime?",
+          "gold": [
+            "gles3jni/app/src/main/cpp/gles3jni.cpp"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "gles3-jni-renderer",
+          "gold_lines": [
+            {
+              "file": "gles3jni/app/src/main/cpp/gles3jni.cpp",
+              "line_range": [
+                235,
+                267
+              ]
+            }
+          ]
+        },
+        {
+          "q": "What screen orientation and configuration changes are declared in the camera/basic AndroidManifest?",
+          "gold": [
+            "camera/basic/src/main/AndroidManifest.xml"
+          ],
+          "lang": "other",
+          "layer": "app",
+          "feature": "camera-basic-native-activity",
+          "gold_lines": []
+        },
+        {
+          "q": "Where is the NDKCamera class interface declared for the texture-view sample, and how does it differ from the basic sample?",
+          "gold": [
+            "camera/texture-view/src/main/cpp/camera_manager.h"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "camera-texture-view",
+          "gold_lines": []
+        }
+      ],
+      "hard_negatives": [
+        {
+          "q": "Where is the fisheye lens undistortion (calibration matrix + remapping) implemented for the AVM surround-view stitcher?"
+        },
+        {
+          "q": "Where is the OAuth2 token refresh flow implemented for authenticating camera stream uploads?"
+        },
+        {
+          "q": "Where is the GraphQL schema defined for the camera metadata API endpoint?"
+        }
+      ]
+    },
+    {
+      "namespace": "repo:libxcam",
+      "repo": "~/engram-eval/proxies/libxcam",
+      "languages": [
+        "c",
+        "cpp",
+        "opencl",
+        "glsl",
+        "python",
+        "makefile"
+      ],
+      "queries": [
+        {
+          "q": "Where is fisheye undistortion (dewarp) implemented and which classes provide the sphere and bowl projection models?",
+          "gold": [
+            "xcore/fisheye_dewarp.cpp",
+            "xcore/fisheye_dewarp.h"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "fisheye-dewarp",
+          "gold_lines": [
+            {
+              "file": "xcore/fisheye_dewarp.h",
+              "line_range": [
+                31,
+                127
+              ]
+            },
+            {
+              "file": "xcore/fisheye_dewarp.cpp",
+              "line_range": [
+                97,
+                149
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Where is the Scaramuzza polynomial fisheye-to-image coordinate transform (PolyBowlFisheyeDewarp) implemented?",
+          "gold": [
+            "xcore/fisheye_dewarp.cpp"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "fisheye-dewarp",
+          "gold_lines": [
+            {
+              "file": "xcore/fisheye_dewarp.cpp",
+              "line_range": [
+                268,
+                293
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Where are the intrinsic and extrinsic camera calibration parameter structs (IntrinsicParameter, ExtrinsicParameter, BowlDataConfig) defined?",
+          "gold": [
+            "xcore/interface/data_types.h"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "fisheye-dewarp",
+          "gold_lines": [
+            {
+              "file": "xcore/interface/data_types.h",
+              "line_range": [
+                85,
+                224
+              ]
+            }
+          ]
+        },
+        {
+          "q": "How does the CalibrationParser parse intrinsic and extrinsic camera calibration files (including Scaramuzza-format and OpenCV JSON)?",
+          "gold": [
+            "xcore/calibration_parser.cpp",
+            "xcore/calibration_parser.h"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "fisheye-dewarp",
+          "gold_lines": []
+        },
+        {
+          "q": "Where is the abstract Stitcher base class defined, including stitch_buffers, bowl config, camera info, and overlap computation?",
+          "gold": [
+            "xcore/interface/stitcher.h",
+            "xcore/interface/stitcher.cpp"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "stitcher",
+          "gold_lines": [
+            {
+              "file": "xcore/interface/stitcher.h",
+              "line_range": [
+                75,
+                317
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Where is the software (CPU) stitcher that combines fisheye dewarp, geo-mapping, and blending implemented?",
+          "gold": [
+            "modules/soft/soft_stitcher.cpp",
+            "modules/soft/soft_stitcher.h"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "stitcher",
+          "gold_lines": [
+            {
+              "file": "modules/soft/soft_stitcher.h",
+              "line_range": [
+                37,
+                92
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Where is the OpenGL ES (GLES) stitcher for 360-degree surround view implemented?",
+          "gold": [
+            "modules/gles/gl_stitcher.cpp",
+            "modules/gles/gl_stitcher.h"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "stitcher",
+          "gold_lines": [
+            {
+              "file": "modules/gles/gl_stitcher.h",
+              "line_range": [
+                34,
+                74
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Where is the Vulkan stitcher for GPU-accelerated surround view implemented?",
+          "gold": [
+            "modules/vulkan/vk_stitcher.cpp",
+            "modules/vulkan/vk_stitcher.h"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "stitcher",
+          "gold_lines": [
+            {
+              "file": "modules/vulkan/vk_stitcher.h",
+              "line_range": [
+                35,
+                80
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Where is the OpenCL 360-degree stitcher (CLImage360Stitch) implemented?",
+          "gold": [
+            "modules/ocl/cl_image_360_stitch.cpp",
+            "modules/ocl/cl_image_360_stitch.h"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "stitcher",
+          "gold_lines": []
+        },
+        {
+          "q": "Where is the GeoMapper interface that abstracts geometry remapping (lookup table remap) across soft, GL, Vulkan, and OCL backends?",
+          "gold": [
+            "xcore/interface/geo_mapper.h",
+            "xcore/interface/geo_mapper.cpp"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "geo-map",
+          "gold_lines": [
+            {
+              "file": "xcore/interface/geo_mapper.h",
+              "line_range": [
+                32,
+                68
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Where is the software (CPU) geometry mapper (remap with lookup table) implemented?",
+          "gold": [
+            "modules/soft/soft_geo_mapper.cpp",
+            "modules/soft/soft_geo_mapper.h"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "geo-map",
+          "gold_lines": [
+            {
+              "file": "modules/soft/soft_geo_mapper.h",
+              "line_range": [
+                37,
+                142
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Where is the OpenGL ES geometry map handler (lookup-table based remap using GLSL compute shaders) implemented?",
+          "gold": [
+            "modules/gles/gl_geomap_handler.cpp",
+            "modules/gles/gl_geomap_handler.h"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "geo-map",
+          "gold_lines": [
+            {
+              "file": "modules/gles/gl_geomap_handler.h",
+              "line_range": [
+                35,
+                124
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Where is the Vulkan geometry map handler (VKGeoMapHandler) implemented?",
+          "gold": [
+            "modules/vulkan/vk_geomap_handler.cpp",
+            "modules/vulkan/vk_geomap_handler.h"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "geo-map",
+          "gold_lines": [
+            {
+              "file": "modules/vulkan/vk_geomap_handler.h",
+              "line_range": [
+                32,
+                80
+              ]
+            }
+          ]
+        },
+        {
+          "q": "What GLSL compute shader implements the geometry (fisheye) remapping for the GLES backend?",
+          "gold": [
+            "shaders/glsl/shader_geomap.comp.sl"
+          ],
+          "lang": "glsl",
+          "layer": "native",
+          "feature": "geo-map",
+          "gold_lines": []
+        },
+        {
+          "q": "What OpenCL kernel implements the fisheye-to-GPS (spherical) remapping?",
+          "gold": [
+            "shaders/cl/kernel_fisheye.cl"
+          ],
+          "lang": "opencl",
+          "layer": "native",
+          "feature": "fisheye-dewarp",
+          "gold_lines": []
+        },
+        {
+          "q": "What OpenCL kernel implements the generic geometry (lookup-table) mapping for OCL backend?",
+          "gold": [
+            "shaders/cl/kernel_geo_map.cl"
+          ],
+          "lang": "opencl",
+          "layer": "native",
+          "feature": "geo-map",
+          "gold_lines": []
+        },
+        {
+          "q": "Where is the abstract Blender interface and its factory methods (create_soft_blender, create_gl_blender, create_vk_blender) defined?",
+          "gold": [
+            "xcore/interface/blender.h",
+            "xcore/interface/blender.cpp"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "blender",
+          "gold_lines": [
+            {
+              "file": "xcore/interface/blender.h",
+              "line_range": [
+                35,
+                100
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Where is the software Laplacian pyramid blender (SoftBlender) implemented?",
+          "gold": [
+            "modules/soft/soft_blender.cpp",
+            "modules/soft/soft_blender.h"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "blender",
+          "gold_lines": [
+            {
+              "file": "modules/soft/soft_blender.h",
+              "line_range": [
+                36,
+                97
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Where is the OpenGL ES pyramid blender (GLBlender) implemented?",
+          "gold": [
+            "modules/gles/gl_blender.cpp",
+            "modules/gles/gl_blender.h"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "blender",
+          "gold_lines": [
+            {
+              "file": "modules/gles/gl_blender.h",
+              "line_range": [
+                36,
+                79
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Where is the Vulkan pyramid blender (VKBlender) implemented?",
+          "gold": [
+            "modules/vulkan/vk_blender.cpp",
+            "modules/vulkan/vk_blender.h"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "blender",
+          "gold_lines": [
+            {
+              "file": "modules/vulkan/vk_blender.h",
+              "line_range": [
+                40,
+                120
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Where is the OpenCL pyramid blender (CLPyramidBlender) implemented?",
+          "gold": [
+            "modules/ocl/cl_pyramid_blender.cpp",
+            "modules/ocl/cl_pyramid_blender.h"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "blender",
+          "gold_lines": []
+        },
+        {
+          "q": "Where is the OpenCL fisheye handler (CLFisheyeHandler) that runs the fisheye dewarp via OpenCL kernels?",
+          "gold": [
+            "modules/ocl/cl_fisheye_handler.cpp",
+            "modules/ocl/cl_fisheye_handler.h"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "fisheye-dewarp",
+          "gold_lines": [
+            {
+              "file": "modules/ocl/cl_fisheye_handler.h",
+              "line_range": [
+                46,
+                187
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Where are the bowl-view world coordinate conversion utilities (bowl_view_image_to_world, bowl_view_coords_to_image) implemented?",
+          "gold": [
+            "xcore/xcam_utils.cpp",
+            "xcore/xcam_utils.h"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "fisheye-dewarp",
+          "gold_lines": [
+            {
+              "file": "xcore/xcam_utils.h",
+              "line_range": [
+                29,
+                38
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Where is the CVFeatureMatch optical-flow feature matching (OpenCV Lucas-Kanade) for stitching seam adjustment implemented?",
+          "gold": [
+            "modules/ocv/cv_feature_match.cpp",
+            "modules/ocv/cv_feature_match.h"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "feature-match",
+          "gold_lines": [
+            {
+              "file": "modules/ocv/cv_feature_match.h",
+              "line_range": [
+                31,
+                89
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Where is the abstract FeatureMatch interface (FMConfig, crop rect, offsets) defined?",
+          "gold": [
+            "xcore/interface/feature_match.h",
+            "xcore/interface/feature_match.cpp"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "feature-match",
+          "gold_lines": [
+            {
+              "file": "xcore/interface/feature_match.h",
+              "line_range": [
+                31,
+                105
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Where are the per-camera-model surround view parameters (bowl config, viewpoints range, FMConfig, FisheyeInfo) defined for test/calibration use?",
+          "gold": [
+            "tests/test_sv_params.h"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "stitcher",
+          "gold_lines": []
+        },
+        {
+          "q": "Where is the EGL context initialization and DMA buffer export for GLES rendering on embedded platforms implemented?",
+          "gold": [
+            "modules/gles/egl/egl_base.cpp",
+            "modules/gles/egl/egl_base.h"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "gles-backend",
+          "gold_lines": [
+            {
+              "file": "modules/gles/egl/egl_base.h",
+              "line_range": [
+                39,
+                98
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Where is the Vulkan device abstraction (VKDevice) that wraps VkDevice creation and buffer/memory management?",
+          "gold": [
+            "modules/vulkan/vk_device.cpp",
+            "modules/vulkan/vk_device.h"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "vk-backend",
+          "gold_lines": [
+            {
+              "file": "modules/vulkan/vk_device.h",
+              "line_range": [
+                42,
+                100
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Where is the Android.mk build file that defines how libxcam, its soft/OCL/GLES modules, and test binaries are built for Android?",
+          "gold": [
+            "Android.mk"
+          ],
+          "lang": "build",
+          "layer": "build",
+          "feature": "stitcher",
+          "gold_lines": [
+            {
+              "file": "Android.mk",
+              "line_range": [
+                1,
+                121
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Where is the surround-view end-to-end test binary (exercising soft/GLES/Vulkan stitchers with real camera input files) implemented?",
+          "gold": [
+            "tests/test-surround-view.cpp"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "stitcher",
+          "gold_lines": []
+        },
+        {
+          "q": "Where is the OSG-based 3D bowl rendering of the surround-view stitched output implemented?",
+          "gold": [
+            "modules/render/render_osg_viewer.cpp",
+            "modules/render/render_osg_viewer.h"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "render",
+          "gold_lines": []
+        },
+        {
+          "q": "Where is the GLFastmapBlender that fuses geo-mapping and pyramid blending into a single GLES pass?",
+          "gold": [
+            "modules/gles/gl_fastmap_blender.cpp",
+            "modules/gles/gl_fastmap_blender.h"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "blender",
+          "gold_lines": []
+        },
+        {
+          "q": "Where are the Gaussian-scale pyramid and Laplacian transform GLSL compute shaders for the GL blender?",
+          "gold": [
+            "shaders/glsl/shader_gauss_scale_pyr.comp.sl",
+            "shaders/glsl/shader_lap_trans_pyr.comp.sl"
+          ],
+          "lang": "glsl",
+          "layer": "native",
+          "feature": "blender",
+          "gold_lines": []
+        },
+        {
+          "q": "Where are pre-compiled Vulkan SPIR-V shaders for geomap and blending stored?",
+          "gold": [
+            "shaders/spv/shader_geomap.comp.spv",
+            "shaders/spv/shader_blend_pyr.comp.spv"
+          ],
+          "lang": "other",
+          "layer": "native",
+          "feature": "vk-backend",
+          "gold_lines": []
+        },
+        {
+          "q": "Where is the soft geometry task (CPU bilinear remap) inner-loop worker (GeoMapTask) that operates on lookup tables defined?",
+          "gold": [
+            "modules/soft/soft_geo_tasks_priv.cpp",
+            "modules/soft/soft_geo_tasks_priv.h"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "geo-map",
+          "gold_lines": [
+            {
+              "file": "modules/soft/soft_geo_tasks_priv.h",
+              "line_range": [
+                33,
+                60
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Where are the Gaussian-scale pyramid worker tasks (GaussScaleGray, GaussScaleY, BlendTask) for the software blender defined?",
+          "gold": [
+            "modules/soft/soft_blender_tasks_priv.cpp",
+            "modules/soft/soft_blender_tasks_priv.h"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "blender",
+          "gold_lines": [
+            {
+              "file": "modules/soft/soft_blender_tasks_priv.h",
+              "line_range": [
+                40,
+                60
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Where is the GStreamer plugin source (xcamsrc) that feeds frames into the xcam pipeline?",
+          "gold": [
+            "wrapper/gstreamer/gstxcamsrc.cpp",
+            "wrapper/gstreamer/gstxcamsrc.h"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "gstreamer-wrapper",
+          "gold_lines": []
+        },
+        {
+          "q": "Where is the ImageProjector class that computes camera intrinsics and extrinsics for video stabilization?",
+          "gold": [
+            "xcore/image_projector.cpp",
+            "xcore/image_projector.h"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "geo-map",
+          "gold_lines": [
+            {
+              "file": "xcore/image_projector.h",
+              "line_range": [
+                87,
+                165
+              ]
+            }
+          ]
+        }
+      ],
+      "features": [
+        {
+          "id": "fisheye-dewarp",
+          "task": "Migrate fisheye undistortion (dewarp) to a new project: find every file that must change.",
+          "footprint": [
+            {
+              "path": "xcore/fisheye_dewarp.h",
+              "layer": "native"
+            },
+            {
+              "path": "xcore/fisheye_dewarp.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "xcore/interface/data_types.h",
+              "layer": "native"
+            },
+            {
+              "path": "xcore/calibration_parser.h",
+              "layer": "native"
+            },
+            {
+              "path": "xcore/calibration_parser.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "xcore/xcam_utils.h",
+              "layer": "native"
+            },
+            {
+              "path": "xcore/xcam_utils.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "modules/ocl/cl_fisheye_handler.h",
+              "layer": "native"
+            },
+            {
+              "path": "modules/ocl/cl_fisheye_handler.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "shaders/cl/kernel_fisheye.cl",
+              "layer": "native"
+            },
+            {
+              "path": "shaders/cl/kernel_geo_map.cl",
+              "layer": "native"
+            },
+            {
+              "path": "tests/test_sv_params.h",
+              "layer": "native"
+            },
+            {
+              "path": "Android.mk",
+              "layer": "build"
+            }
+          ]
+        },
+        {
+          "id": "stitcher",
+          "task": "Migrate the 360-degree bowl-view stitcher (all backends) to a new project: find every file that must change.",
+          "footprint": [
+            {
+              "path": "xcore/interface/stitcher.h",
+              "layer": "native"
+            },
+            {
+              "path": "xcore/interface/stitcher.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "xcore/interface/blender.h",
+              "layer": "native"
+            },
+            {
+              "path": "xcore/interface/blender.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "xcore/interface/geo_mapper.h",
+              "layer": "native"
+            },
+            {
+              "path": "xcore/interface/geo_mapper.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "xcore/interface/data_types.h",
+              "layer": "native"
+            },
+            {
+              "path": "xcore/fisheye_dewarp.h",
+              "layer": "native"
+            },
+            {
+              "path": "xcore/fisheye_dewarp.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "xcore/calibration_parser.h",
+              "layer": "native"
+            },
+            {
+              "path": "xcore/calibration_parser.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "xcore/xcam_utils.h",
+              "layer": "native"
+            },
+            {
+              "path": "xcore/xcam_utils.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "modules/soft/soft_stitcher.h",
+              "layer": "native"
+            },
+            {
+              "path": "modules/soft/soft_stitcher.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "modules/soft/soft_blender.h",
+              "layer": "native"
+            },
+            {
+              "path": "modules/soft/soft_blender.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "modules/soft/soft_geo_mapper.h",
+              "layer": "native"
+            },
+            {
+              "path": "modules/soft/soft_geo_mapper.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "modules/gles/gl_stitcher.h",
+              "layer": "native"
+            },
+            {
+              "path": "modules/gles/gl_stitcher.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "modules/gles/gl_blender.h",
+              "layer": "native"
+            },
+            {
+              "path": "modules/gles/gl_blender.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "modules/gles/gl_geomap_handler.h",
+              "layer": "native"
+            },
+            {
+              "path": "modules/gles/gl_geomap_handler.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "modules/vulkan/vk_stitcher.h",
+              "layer": "native"
+            },
+            {
+              "path": "modules/vulkan/vk_stitcher.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "modules/vulkan/vk_blender.h",
+              "layer": "native"
+            },
+            {
+              "path": "modules/vulkan/vk_blender.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "modules/vulkan/vk_geomap_handler.h",
+              "layer": "native"
+            },
+            {
+              "path": "modules/vulkan/vk_geomap_handler.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "modules/ocl/cl_image_360_stitch.h",
+              "layer": "native"
+            },
+            {
+              "path": "modules/ocl/cl_image_360_stitch.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "shaders/glsl/shader_geomap.comp.sl",
+              "layer": "native"
+            },
+            {
+              "path": "shaders/glsl/shader_blend_pyr.comp.sl",
+              "layer": "native"
+            },
+            {
+              "path": "shaders/glsl/shader_gauss_scale_pyr.comp.sl",
+              "layer": "native"
+            },
+            {
+              "path": "shaders/glsl/shader_lap_trans_pyr.comp.sl",
+              "layer": "native"
+            },
+            {
+              "path": "shaders/glsl/shader_reconstruct_pyr.comp.sl",
+              "layer": "native"
+            },
+            {
+              "path": "shaders/spv/shader_geomap.comp.spv",
+              "layer": "native"
+            },
+            {
+              "path": "shaders/spv/shader_blend_pyr.comp.spv",
+              "layer": "native"
+            },
+            {
+              "path": "tests/test_sv_params.h",
+              "layer": "native"
+            },
+            {
+              "path": "tests/test-surround-view.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "Android.mk",
+              "layer": "build"
+            }
+          ]
+        },
+        {
+          "id": "gles-backend",
+          "task": "Migrate the GLES/EGL rendering backend to a new project: find every file that must change.",
+          "footprint": [
+            {
+              "path": "modules/gles/egl/egl_base.h",
+              "layer": "native"
+            },
+            {
+              "path": "modules/gles/egl/egl_base.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "modules/gles/egl/egl_utils.h",
+              "layer": "native"
+            },
+            {
+              "path": "modules/gles/egl/egl_utils.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "modules/gles/gles_std.h",
+              "layer": "native"
+            },
+            {
+              "path": "modules/gles/gles_std.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "modules/gles/gl_buffer.h",
+              "layer": "native"
+            },
+            {
+              "path": "modules/gles/gl_buffer.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "modules/gles/gl_program.h",
+              "layer": "native"
+            },
+            {
+              "path": "modules/gles/gl_program.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "modules/gles/gl_shader.h",
+              "layer": "native"
+            },
+            {
+              "path": "modules/gles/gl_shader.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "modules/gles/gl_compute_program.h",
+              "layer": "native"
+            },
+            {
+              "path": "modules/gles/gl_compute_program.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "modules/gles/gl_image_handler.h",
+              "layer": "native"
+            },
+            {
+              "path": "modules/gles/gl_image_handler.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "modules/gles/gl_video_buffer.h",
+              "layer": "native"
+            },
+            {
+              "path": "modules/gles/gl_video_buffer.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "modules/gles/gl_texture.h",
+              "layer": "native"
+            },
+            {
+              "path": "modules/gles/gl_texture.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "modules/gles/gl_sync.h",
+              "layer": "native"
+            },
+            {
+              "path": "modules/gles/gl_sync.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "modules/gles/gl_dma_buffer_handler.h",
+              "layer": "native"
+            },
+            {
+              "path": "modules/gles/gl_dma_buffer_handler.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "modules/gles/gl_utils.h",
+              "layer": "native"
+            },
+            {
+              "path": "modules/gles/gl_utils.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "modules/gles/Makefile.am",
+              "layer": "build"
+            }
+          ]
+        },
+        {
+          "id": "vk-backend",
+          "task": "Migrate the Vulkan compute backend to a new project: find every file that must change.",
+          "footprint": [
+            {
+              "path": "modules/vulkan/vulkan_std.h",
+              "layer": "native"
+            },
+            {
+              "path": "modules/vulkan/vulkan_common.h",
+              "layer": "native"
+            },
+            {
+              "path": "modules/vulkan/vulkan_common.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "modules/vulkan/vk_instance.h",
+              "layer": "native"
+            },
+            {
+              "path": "modules/vulkan/vk_instance.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "modules/vulkan/vk_device.h",
+              "layer": "native"
+            },
+            {
+              "path": "modules/vulkan/vk_device.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "modules/vulkan/vk_memory.h",
+              "layer": "native"
+            },
+            {
+              "path": "modules/vulkan/vk_memory.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "modules/vulkan/vk_cmdbuf.h",
+              "layer": "native"
+            },
+            {
+              "path": "modules/vulkan/vk_cmdbuf.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "modules/vulkan/vk_pipeline.h",
+              "layer": "native"
+            },
+            {
+              "path": "modules/vulkan/vk_pipeline.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "modules/vulkan/vk_shader.h",
+              "layer": "native"
+            },
+            {
+              "path": "modules/vulkan/vk_shader.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "modules/vulkan/vk_descriptor.h",
+              "layer": "native"
+            },
+            {
+              "path": "modules/vulkan/vk_descriptor.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "modules/vulkan/vk_handler.h",
+              "layer": "native"
+            },
+            {
+              "path": "modules/vulkan/vk_handler.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "modules/vulkan/vk_worker.h",
+              "layer": "native"
+            },
+            {
+              "path": "modules/vulkan/vk_worker.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "modules/vulkan/vk_sync.h",
+              "layer": "native"
+            },
+            {
+              "path": "modules/vulkan/vk_sync.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "modules/vulkan/vk_video_buf_allocator.h",
+              "layer": "native"
+            },
+            {
+              "path": "modules/vulkan/vk_video_buf_allocator.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "shaders/spv/shader_geomap.comp.spv",
+              "layer": "native"
+            },
+            {
+              "path": "shaders/spv/shader_blend_pyr.comp.spv",
+              "layer": "native"
+            },
+            {
+              "path": "shaders/spv/shader_gauss_scale_pyr.comp.spv",
+              "layer": "native"
+            },
+            {
+              "path": "shaders/spv/shader_lap_trans_pyr.comp.spv",
+              "layer": "native"
+            },
+            {
+              "path": "shaders/spv/shader_reconstruct_pyr.comp.spv",
+              "layer": "native"
+            },
+            {
+              "path": "shaders/spv/shader_copy.comp.spv",
+              "layer": "native"
+            },
+            {
+              "path": "modules/vulkan/Makefile.am",
+              "layer": "build"
+            }
+          ]
+        },
+        {
+          "id": "feature-match",
+          "task": "Migrate the optical-flow feature matching (seam adjustment) to a new project: find every file that must change.",
+          "footprint": [
+            {
+              "path": "xcore/interface/feature_match.h",
+              "layer": "native"
+            },
+            {
+              "path": "xcore/interface/feature_match.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "modules/ocv/cv_feature_match.h",
+              "layer": "native"
+            },
+            {
+              "path": "modules/ocv/cv_feature_match.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "modules/ocv/cv_feature_match_cluster.h",
+              "layer": "native"
+            },
+            {
+              "path": "modules/ocv/cv_feature_match_cluster.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "modules/ocv/cv_capi_feature_match.h",
+              "layer": "native"
+            },
+            {
+              "path": "modules/ocv/cv_capi_feature_match.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "modules/ocv/cv_utils.h",
+              "layer": "native"
+            },
+            {
+              "path": "modules/ocv/cv_utils.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "xcore/interface/data_types.h",
+              "layer": "native"
+            }
+          ]
+        }
+      ],
+      "hard_negatives": [
+        {
+          "q": "Where is the OAuth2 login flow and token refresh for the Android camera app implemented?"
+        },
+        {
+          "q": "Where is the GraphQL schema and API resolver for streaming camera metadata to a cloud dashboard?"
+        },
+        {
+          "q": "Where is the Kotlin Jetpack Compose UI for the surround-view Android application?"
+        }
+      ]
+    },
+    {
+      "namespace": "repo:gpuimage-plus",
+      "repo": "~/engram-eval/proxies/android-gpuimage-plus",
+      "languages": [
+        "java",
+        "kotlin",
+        "cpp",
+        "c",
+        "build"
+      ],
+      "queries": [
+        {
+          "q": "Where is the CGEFrameRenderer C++ class defined, and what are its init and update methods?",
+          "gold": [
+            "library/src/main/jni/interface/cgeFrameRenderer.h"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "frame-renderer-pipeline",
+          "gold_lines": [
+            {
+              "file": "library/src/main/jni/interface/cgeFrameRenderer.h",
+              "line_range": [
+                33,
+                116
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Where is the C++ implementation of CGEFrameRenderer::update() that draws the external OES camera texture into the framebuffer?",
+          "gold": [
+            "library/src/main/jni/interface/cgeFrameRenderer.cpp"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "frame-renderer-pipeline",
+          "gold_lines": [
+            {
+              "file": "library/src/main/jni/interface/cgeFrameRenderer.cpp",
+              "line_range": [
+                145,
+                162
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Where are the JNI bridge functions that connect the Java CGEFrameRenderer class to its native C++ counterpart?",
+          "gold": [
+            "library/src/main/jni/interface/cgeFrameRendererWrapper.cpp"
+          ],
+          "lang": "cpp",
+          "layer": "jni",
+          "feature": "frame-renderer-pipeline",
+          "gold_lines": [
+            {
+              "file": "library/src/main/jni/interface/cgeFrameRendererWrapper.cpp",
+              "line_range": [
+                23,
+                65
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Where is the Java CGEFrameRenderer wrapper class that holds the native address and declares the native method signatures?",
+          "gold": [
+            "library/src/main/java/org/wysaid/nativePort/CGEFrameRenderer.java"
+          ],
+          "lang": "java",
+          "layer": "app",
+          "feature": "frame-renderer-pipeline",
+          "gold_lines": [
+            {
+              "file": "library/src/main/java/org/wysaid/nativePort/CGEFrameRenderer.java",
+              "line_range": [
+                1,
+                196
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Where is the GL surface view that wires SurfaceTexture onFrameAvailable events to CGEFrameRecorder update/runProc/render calls?",
+          "gold": [
+            "library/src/main/java/org/wysaid/view/CameraGLSurfaceViewWithTexture.java"
+          ],
+          "lang": "java",
+          "layer": "app",
+          "feature": "camera-preview-pipeline",
+          "gold_lines": [
+            {
+              "file": "library/src/main/java/org/wysaid/view/CameraGLSurfaceViewWithTexture.java",
+              "line_range": [
+                208,
+                250
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Where is the CameraX implementation of ICameraProvider that binds a SurfaceTexture to a Preview use case and locks frame rate to 30 fps?",
+          "gold": [
+            "library/src/main/java/org/wysaid/camera/CameraXProvider.java"
+          ],
+          "lang": "java",
+          "layer": "app",
+          "feature": "camera-provider-abstraction",
+          "gold_lines": [
+            {
+              "file": "library/src/main/java/org/wysaid/camera/CameraXProvider.java",
+              "line_range": [
+                455,
+                550
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Where is the ICameraProvider interface that abstracts Camera1 and CameraX backends, including startPreview and needsManualRotation?",
+          "gold": [
+            "library/src/main/java/org/wysaid/camera/ICameraProvider.java"
+          ],
+          "lang": "java",
+          "layer": "app",
+          "feature": "camera-provider-abstraction",
+          "gold_lines": [
+            {
+              "file": "library/src/main/java/org/wysaid/camera/ICameraProvider.java",
+              "line_range": [
+                18,
+                348
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Where is the factory class that creates a Camera1 or CameraX provider via reflection at runtime?",
+          "gold": [
+            "library/src/main/java/org/wysaid/camera/CameraProviderFactory.java"
+          ],
+          "lang": "java",
+          "layer": "app",
+          "feature": "camera-provider-abstraction",
+          "gold_lines": []
+        },
+        {
+          "q": "Where is the Camera1 implementation of ICameraProvider that delegates to the CameraInstance singleton?",
+          "gold": [
+            "library/src/main/java/org/wysaid/camera/Camera1Provider.java"
+          ],
+          "lang": "java",
+          "layer": "app",
+          "feature": "camera-provider-abstraction",
+          "gold_lines": []
+        },
+        {
+          "q": "How are CGE native libraries (CGE, CGEExt, ffmpeg) loaded at startup in Java, and where is that code?",
+          "gold": [
+            "library/src/main/java/org/wysaid/nativePort/NativeLibraryLoader.java"
+          ],
+          "lang": "java",
+          "layer": "app",
+          "feature": "native-library-loading",
+          "gold_lines": [
+            {
+              "file": "library/src/main/java/org/wysaid/nativePort/NativeLibraryLoader.java",
+              "line_range": [
+                12,
+                38
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Where is JNI_OnLoad registered and the GL3/GL31 stubs initialized at library load time?",
+          "gold": [
+            "library/src/main/jni/interface/cgeNativeLibrary.cpp"
+          ],
+          "lang": "cpp",
+          "layer": "jni",
+          "feature": "native-library-loading",
+          "gold_lines": [
+            {
+              "file": "library/src/main/jni/interface/cgeNativeLibrary.cpp",
+              "line_range": [
+                74,
+                91
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Where is the global texture load callback (cgeGlobalTextureLoadFunc) that calls back into Java to load bitmaps as OpenGL textures?",
+          "gold": [
+            "library/src/main/jni/interface/cgeUtilFunctions.cpp"
+          ],
+          "lang": "cpp",
+          "layer": "jni",
+          "feature": "texture-load-callback",
+          "gold_lines": [
+            {
+              "file": "library/src/main/jni/interface/cgeUtilFunctions.cpp",
+              "line_range": [
+                25,
+                66
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Where is the Java side of the texture loading callback (loadTextureByName / loadTextureByBitmap) that JNI calls to upload bitmaps as GL textures?",
+          "gold": [
+            "library/src/main/java/org/wysaid/nativePort/CGENativeLibrary.java"
+          ],
+          "lang": "java",
+          "layer": "app",
+          "feature": "texture-load-callback",
+          "gold_lines": [
+            {
+              "file": "library/src/main/java/org/wysaid/nativePort/CGENativeLibrary.java",
+              "line_range": [
+                86,
+                117
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Where is the CMake build file that defines the CGE shared library, links GLESv2/EGL/jnigraphics, and conditionally links ffmpeg?",
+          "gold": [
+            "library/src/main/jni/CMakeLists.txt"
+          ],
+          "lang": "build",
+          "layer": "build",
+          "feature": "native-library-loading",
+          "gold_lines": [
+            {
+              "file": "library/src/main/jni/CMakeLists.txt",
+              "line_range": [
+                57,
+                121
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Where is the Android Gradle build file that configures cmake flags, CameraX compileOnly dependencies, and the CGE_USE_VIDEO_MODULE build config field?",
+          "gold": [
+            "library/build.gradle"
+          ],
+          "lang": "build",
+          "layer": "build",
+          "feature": "native-library-loading",
+          "gold_lines": [
+            {
+              "file": "library/build.gradle",
+              "line_range": [
+                25,
+                130
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Where is the C++ class CGEMutipleEffectFilter that parses a filter-config string and chains multiple GL filter passes?",
+          "gold": [
+            "library/src/main/jni/cge/filters/cgeMultipleEffects.h"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "filter-config-pipeline",
+          "gold_lines": [
+            {
+              "file": "library/src/main/jni/cge/filters/cgeMultipleEffects.h",
+              "line_range": [
+                42,
+                101
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Where is the CGEDataParsingEngine that maps filter-config keywords (adjust, blend, vignette, etc.) to C++ filter objects?",
+          "gold": [
+            "library/src/main/jni/cge/filters/cgeDataParsingEngine.h"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "filter-config-pipeline",
+          "gold_lines": [
+            {
+              "file": "library/src/main/jni/cge/filters/cgeDataParsingEngine.h",
+              "line_range": [
+                15,
+                39
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Where is the abstract base class CGEImageFilterInterfaceAbstract with its pure-virtual render2Texture method that all CGE filters implement?",
+          "gold": [
+            "library/src/main/jni/cge/common/cgeImageFilter.h"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "filter-config-pipeline",
+          "gold_lines": [
+            {
+              "file": "library/src/main/jni/cge/common/cgeImageFilter.h",
+              "line_range": [
+                38,
+                51
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Where is the CGEImageHandler class that owns the ping-pong FBO textures and the vector of filters that processingFilters() iterates?",
+          "gold": [
+            "library/src/main/jni/cge/common/cgeImageHandler.h"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "filter-config-pipeline",
+          "gold_lines": [
+            {
+              "file": "library/src/main/jni/cge/common/cgeImageHandler.h",
+              "line_range": [
+                72,
+                157
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Where is the JNI wrapper that exposes cgeFilterImage_MultipleEffects (apply a filter-config string to a Bitmap off-screen) to Java?",
+          "gold": [
+            "library/src/main/jni/interface/cgeNativeLibrary.cpp"
+          ],
+          "lang": "cpp",
+          "layer": "jni",
+          "feature": "filter-config-pipeline",
+          "gold_lines": [
+            {
+              "file": "library/src/main/jni/interface/cgeNativeLibrary.cpp",
+              "line_range": [
+                98,
+                187
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Where is the TextureDrawer4ExtOES class that draws an OpenGL ES external-OES texture (camera SurfaceTexture) with a transform matrix?",
+          "gold": [
+            "library/src/main/jni/cge/common/cgeTextureUtils.h"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "oes-texture-rendering",
+          "gold_lines": [
+            {
+              "file": "library/src/main/jni/cge/common/cgeTextureUtils.h",
+              "line_range": [
+                134,
+                153
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Where are the GLSL vertex and fragment shaders for the TextureDrawer (identity-blit), the mask drawer, and the OES external texture drawer defined inline as C strings?",
+          "gold": [
+            "library/src/main/jni/cge/common/cgeTextureUtils.cpp"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "oes-texture-rendering",
+          "gold_lines": [
+            {
+              "file": "library/src/main/jni/cge/common/cgeTextureUtils.cpp",
+              "line_range": [
+                17,
+                65
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Where is the CGESharedGLContext class that creates an offscreen EGL PBuffer context used when processing Bitmaps without an existing GL context?",
+          "gold": [
+            "library/src/main/jni/interface/cgeSharedGLContext.h"
+          ],
+          "lang": "cpp",
+          "layer": "jni",
+          "feature": "offscreen-gl-context",
+          "gold_lines": [
+            {
+              "file": "library/src/main/jni/interface/cgeSharedGLContext.h",
+              "line_range": [
+                22,
+                54
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Where is CGEFrameRecorder defined (the recorder that extends CGEFrameRenderer with FFmpeg MP4 recording)?",
+          "gold": [
+            "library/src/main/jni/interface/cgeFrameRecorder.h"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "video-recording",
+          "gold_lines": [
+            {
+              "file": "library/src/main/jni/interface/cgeFrameRecorder.h",
+              "line_range": [
+                85,
+                169
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Where is the Java CGEFrameRecorder class with its startRecording / recordImageFrame / recordAudioFrame methods?",
+          "gold": [
+            "library/src/main/java/org/wysaid/nativePort/CGEFrameRecorder.java"
+          ],
+          "lang": "java",
+          "layer": "app",
+          "feature": "video-recording",
+          "gold_lines": []
+        },
+        {
+          "q": "Where are the JNI functions that bridge Java CGEFrameRecorder.startRecording / endRecording to the native CGEFrameRecorder?",
+          "gold": [
+            "library/src/main/jni/interface/cgeFrameRecorderWrapper.cpp"
+          ],
+          "lang": "cpp",
+          "layer": "jni",
+          "feature": "video-recording",
+          "gold_lines": []
+        },
+        {
+          "q": "Where is the CGEBlendFilter class hierarchy (CGEBlendInterface, CGEBlendFilter, CGEBlendKeepRatioFilter) that implements GPU texture blending modes?",
+          "gold": [
+            "library/src/main/jni/cge/filters/cgeBlendFilter.h"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "feature": "blend-filter",
+          "gold_lines": []
+        },
+        {
+          "q": "Where is the CGELookupFilter (LUT filter) class that applies a full-image color lookup table texture?",
+          "gold": [
+            "library/src/main/jni/cge/filters/cgeLookupFilter.h"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "gold_lines": []
+        },
+        {
+          "q": "Where is the CameraGLSurfaceView base class that provides camera switching, viewport calculation, and the ICameraProvider injection point?",
+          "gold": [
+            "library/src/main/java/org/wysaid/view/CameraGLSurfaceView.java"
+          ],
+          "lang": "java",
+          "layer": "app",
+          "feature": "camera-provider-abstraction",
+          "gold_lines": [
+            {
+              "file": "library/src/main/java/org/wysaid/view/CameraGLSurfaceView.java",
+              "line_range": [
+                62,
+                80
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Where is the ShaderObject class and loadShaderSourceFromString method that compile GLSL shaders for all CGE filters?",
+          "gold": [
+            "library/src/main/jni/cge/common/cgeShaderFunctions.cpp"
+          ],
+          "lang": "cpp",
+          "layer": "native",
+          "gold_lines": [
+            {
+              "file": "library/src/main/jni/cge/common/cgeShaderFunctions.cpp",
+              "line_range": [
+                19,
+                70
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Where is the CGEImageHandlerAndroid class that extends CGEImageHandler with initWithBitmap and getResultBitmap to handle Android Bitmap objects?",
+          "gold": [
+            "library/src/main/jni/interface/cgeImageHandlerAndroid.h"
+          ],
+          "lang": "cpp",
+          "layer": "jni",
+          "gold_lines": [
+            {
+              "file": "library/src/main/jni/interface/cgeImageHandlerAndroid.h",
+              "line_range": [
+                16,
+                31
+              ]
+            }
+          ]
+        },
+        {
+          "q": "Where is the JNI wrapper that exposes CGEImageHandler (nativeCreateHandler, nativeInitWithBitmap, nativeGetResultBitmap, nativeSetFilterWithConfig) to Java?",
+          "gold": [
+            "library/src/main/jni/interface/cgeImageHandlerWrapper.cpp"
+          ],
+          "lang": "cpp",
+          "layer": "jni",
+          "gold_lines": []
+        },
+        {
+          "q": "Where is the CameraGLSurfaceViewWithBuffer subclass that receives raw NV21 preview bytes via Camera.PreviewCallback and uploads them as GL textures?",
+          "gold": [
+            "library/src/main/java/org/wysaid/view/CameraGLSurfaceViewWithBuffer.java"
+          ],
+          "lang": "java",
+          "layer": "app",
+          "gold_lines": []
+        },
+        {
+          "q": "Where is the CameraRecordGLSurfaceView (the camera+recording view used in the demo) defined?",
+          "gold": [
+            "library/src/main/java/org/wysaid/view/CameraRecordGLSurfaceView.java"
+          ],
+          "lang": "java",
+          "layer": "app",
+          "gold_lines": []
+        },
+        {
+          "q": "Where is the demo Activity that shows live camera preview with filter selection and optional video recording?",
+          "gold": [
+            "cgeDemo/src/main/java/org/wysaid/cgeDemo/CameraDemoActivity.java"
+          ],
+          "lang": "java",
+          "layer": "app",
+          "gold_lines": []
+        }
+      ],
+      "features": [
+        {
+          "id": "frame-renderer-pipeline",
+          "task": "Migrate the real-time camera frame rendering pipeline (OES texture \u2192 CGE filter \u2192 FBO \u2192 screen) to a new project: find every file that must change.",
+          "footprint": [
+            {
+              "path": "library/src/main/jni/interface/cgeFrameRenderer.h",
+              "layer": "native"
+            },
+            {
+              "path": "library/src/main/jni/interface/cgeFrameRenderer.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "library/src/main/jni/interface/cgeFrameRendererWrapper.cpp",
+              "layer": "jni"
+            },
+            {
+              "path": "library/src/main/jni/interface/cgeFrameRendererWrapper.h",
+              "layer": "jni"
+            },
+            {
+              "path": "library/src/main/java/org/wysaid/nativePort/CGEFrameRenderer.java",
+              "layer": "app"
+            },
+            {
+              "path": "library/src/main/java/org/wysaid/view/CameraGLSurfaceViewWithTexture.java",
+              "layer": "app"
+            },
+            {
+              "path": "library/src/main/java/org/wysaid/view/CameraRecordGLSurfaceView.java",
+              "layer": "app"
+            },
+            {
+              "path": "library/src/main/jni/cge/common/cgeImageHandler.h",
+              "layer": "native"
+            },
+            {
+              "path": "library/src/main/jni/cge/common/cgeImageHandler.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "library/src/main/jni/cge/common/cgeTextureUtils.h",
+              "layer": "native"
+            },
+            {
+              "path": "library/src/main/jni/cge/common/cgeTextureUtils.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "library/src/main/jni/CMakeLists.txt",
+              "layer": "build"
+            },
+            {
+              "path": "library/build.gradle",
+              "layer": "build"
+            }
+          ]
+        },
+        {
+          "id": "camera-provider-abstraction",
+          "task": "Migrate the camera provider abstraction layer (ICameraProvider, Camera1, CameraX backends, factory) to a new project: find every file that must change.",
+          "footprint": [
+            {
+              "path": "library/src/main/java/org/wysaid/camera/ICameraProvider.java",
+              "layer": "app"
+            },
+            {
+              "path": "library/src/main/java/org/wysaid/camera/Camera1Provider.java",
+              "layer": "app"
+            },
+            {
+              "path": "library/src/main/java/org/wysaid/camera/CameraXProvider.java",
+              "layer": "app"
+            },
+            {
+              "path": "library/src/main/java/org/wysaid/camera/CameraProviderFactory.java",
+              "layer": "app"
+            },
+            {
+              "path": "library/src/main/java/org/wysaid/camera/CameraInstance.java",
+              "layer": "app"
+            },
+            {
+              "path": "library/src/main/java/org/wysaid/view/CameraGLSurfaceView.java",
+              "layer": "app"
+            },
+            {
+              "path": "library/src/main/java/org/wysaid/view/CameraGLSurfaceViewWithTexture.java",
+              "layer": "app"
+            },
+            {
+              "path": "library/build.gradle",
+              "layer": "build"
+            }
+          ]
+        },
+        {
+          "id": "filter-config-pipeline",
+          "task": "Migrate the filter-config string pipeline (parse config \u2192 instantiate GL filters \u2192 apply to image/frame) to a new project: find every file that must change.",
+          "footprint": [
+            {
+              "path": "library/src/main/jni/cge/filters/cgeMultipleEffects.h",
+              "layer": "native"
+            },
+            {
+              "path": "library/src/main/jni/cge/filters/cgeMultipleEffects.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "library/src/main/jni/cge/filters/cgeMultipleEffectsCommon.h",
+              "layer": "native"
+            },
+            {
+              "path": "library/src/main/jni/cge/filters/cgeMultipleEffectsCommon.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "library/src/main/jni/cge/filters/cgeDataParsingEngine.h",
+              "layer": "native"
+            },
+            {
+              "path": "library/src/main/jni/cge/filters/cgeDataParsingEngine.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "library/src/main/jni/cge/common/cgeImageFilter.h",
+              "layer": "native"
+            },
+            {
+              "path": "library/src/main/jni/cge/common/cgeImageFilter.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "library/src/main/jni/cge/common/cgeImageHandler.h",
+              "layer": "native"
+            },
+            {
+              "path": "library/src/main/jni/cge/common/cgeImageHandler.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "library/src/main/jni/interface/cgeNativeLibrary.cpp",
+              "layer": "jni"
+            },
+            {
+              "path": "library/src/main/jni/interface/cgeNativeLibrary.h",
+              "layer": "jni"
+            },
+            {
+              "path": "library/src/main/jni/interface/cgeImageHandlerWrapper.cpp",
+              "layer": "jni"
+            },
+            {
+              "path": "library/src/main/jni/interface/cgeImageHandlerWrapper.h",
+              "layer": "jni"
+            },
+            {
+              "path": "library/src/main/jni/interface/cgeUtilFunctions.cpp",
+              "layer": "jni"
+            },
+            {
+              "path": "library/src/main/jni/interface/cgeUtilFunctions.h",
+              "layer": "jni"
+            },
+            {
+              "path": "library/src/main/java/org/wysaid/nativePort/CGENativeLibrary.java",
+              "layer": "app"
+            },
+            {
+              "path": "library/src/main/java/org/wysaid/nativePort/CGEImageHandler.java",
+              "layer": "app"
+            },
+            {
+              "path": "library/src/main/jni/CMakeLists.txt",
+              "layer": "build"
+            }
+          ]
+        },
+        {
+          "id": "native-library-loading",
+          "task": "Migrate the native library build and load bootstrap (CGE, CGEExt, ffmpeg .so; CMake; Gradle) to a new project: find every file that must change.",
+          "footprint": [
+            {
+              "path": "library/src/main/jni/CMakeLists.txt",
+              "layer": "build"
+            },
+            {
+              "path": "library/src/main/jni/Android.mk",
+              "layer": "build"
+            },
+            {
+              "path": "library/src/main/jni/Application.mk",
+              "layer": "build"
+            },
+            {
+              "path": "library/build.gradle",
+              "layer": "build"
+            },
+            {
+              "path": "build.gradle",
+              "layer": "build"
+            },
+            {
+              "path": "settings.gradle",
+              "layer": "build"
+            },
+            {
+              "path": "library/src/main/java/org/wysaid/nativePort/NativeLibraryLoader.java",
+              "layer": "app"
+            },
+            {
+              "path": "library/src/main/jni/interface/cgeNativeLibrary.cpp",
+              "layer": "jni"
+            },
+            {
+              "path": "library/src/main/jni/interface/cgeNativeLibrary.h",
+              "layer": "jni"
+            }
+          ]
+        },
+        {
+          "id": "video-recording",
+          "task": "Migrate the GPU-accelerated camera-to-MP4 recording pipeline (CGEFrameRecorder + FFmpeg encoder) to a new project: find every file that must change.",
+          "footprint": [
+            {
+              "path": "library/src/main/jni/interface/cgeFrameRecorder.h",
+              "layer": "native"
+            },
+            {
+              "path": "library/src/main/jni/interface/cgeFrameRecorder.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "library/src/main/jni/interface/cgeFrameRecorderWrapper.cpp",
+              "layer": "jni"
+            },
+            {
+              "path": "library/src/main/jni/interface/cgeFrameRecorderWrapper.h",
+              "layer": "jni"
+            },
+            {
+              "path": "library/src/main/jni/interface/cgeVideoEncoder.h",
+              "layer": "native"
+            },
+            {
+              "path": "library/src/main/jni/interface/cgeVideoEncoder.cpp",
+              "layer": "native"
+            },
+            {
+              "path": "library/src/main/java/org/wysaid/nativePort/CGEFrameRecorder.java",
+              "layer": "app"
+            },
+            {
+              "path": "library/src/main/java/org/wysaid/view/CameraRecordGLSurfaceView.java",
+              "layer": "app"
+            },
+            {
+              "path": "library/src/main/java/org/wysaid/nativePort/CGEFFmpegNativeLibrary.java",
+              "layer": "app"
+            },
+            {
+              "path": "library/src/main/jni/interface/cgeFFmpegNativeLibrary.cpp",
+              "layer": "jni"
+            },
+            {
+              "path": "library/src/main/jni/CMakeLists.txt",
+              "layer": "build"
+            },
+            {
+              "path": "library/build.gradle",
+              "layer": "build"
+            }
+          ]
+        }
+      ],
+      "hard_negatives": [
+        {
+          "q": "Where is the OAuth2 token refresh flow and user login screen implemented?"
+        },
+        {
+          "q": "Where is the GraphQL schema and the Apollo client configuration for network data fetching?"
+        },
+        {
+          "q": "Where is the ARCore depth-map API integration for LiDAR-based 3D scene reconstruction?"
+        }
+      ]
+    }
+  ]
+}
