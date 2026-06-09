@@ -6,7 +6,7 @@ deploy. Bars: **ingest ≥ 0.99**, **recall@5 ≥ 0.80** (tightened in Phase F; 
 ## Baseline — 2026-06-09 (Phase E)
 
 Live deploy `http://127.0.0.1:8088`, namespace `repo:agentmemory`, embed `gateway:mxbai-embed-large:1024`,
-corpus `/home/vinc/code/agentmemory`. Pre-robustness ingest (451 docs), pre-Phase-F chunking.
+corpus `../agentmemory`. Pre-robustness ingest (451 docs), pre-Phase-F chunking.
 
 | Metric | Value | Bar | Result |
 |--------|-------|-----|--------|
