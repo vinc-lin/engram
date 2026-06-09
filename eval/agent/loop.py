@@ -36,6 +36,13 @@ _JSON_BLOCK = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
 
 def parse_footprint(content):
     """Extract the feature_footprint list from the model's final message (tolerant)."""
+    c = (content or "").strip()
+    try:  # JSON-output mode returns a bare object
+        obj = json.loads(c)
+        if isinstance(obj.get("feature_footprint"), list):
+            return obj["feature_footprint"]
+    except Exception:
+        pass
     for m in _JSON_BLOCK.finditer(content or ""):
         try:
             obj = json.loads(m.group(1))
@@ -137,9 +144,9 @@ def run(task, arm, model, toolbox, caps):
                                         "feature_footprint JSON now. No prose, no tools."},
         ]
         try:
-            at = llm.chat(clean, [], model=model, max_tokens=caps["max_tokens"],
+            at = llm.chat(clean, [], model=model, max_tokens=max(caps["max_tokens"], 2048),
                           temperature=caps["temperature"], enable_thinking=False,
-                          timeout=caps["deadline"])
+                          timeout=caps["deadline"], response_format={"type": "json_object"})
             for k in usage_tot:
                 usage_tot[k] += at.usage.get(k, 0)
             final = parse_footprint(at.content) or final

@@ -96,7 +96,7 @@ def _recover_tool_calls_from_content(content):
 
 
 def chat(messages, tools, model="deepseek-chat", max_tokens=1024, temperature=0.1,
-         enable_thinking=False, timeout=180, tool_choice="auto"):
+         enable_thinking=False, timeout=180, tool_choice="auto", response_format=None):
     """One chat-completions round-trip. Returns an AssistantTurn (normalized across models)."""
     body = {
         "model": model,
@@ -104,6 +104,8 @@ def chat(messages, tools, model="deepseek-chat", max_tokens=1024, temperature=0.
         "max_tokens": max_tokens,
         "temperature": temperature,
     }
+    if response_format:
+        body["response_format"] = response_format
     if tools:
         body["tools"] = tools
         body["tool_choice"] = tool_choice
