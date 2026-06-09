@@ -10,4 +10,5 @@ pub mod model;
 pub mod retrieve;
 pub mod store;
 pub mod tree;
+pub mod treesit;
 pub mod vault;

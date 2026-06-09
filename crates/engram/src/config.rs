@@ -133,6 +133,23 @@ pub fn code_path_prior() -> bool {
     })
 }
 
+/// Whether code ingest uses tree-sitter boundary chunking + AST symbols (Phase 4). Cached read of
+/// `ENGRAM_CODE_TREE_SITTER` (default true); falls back to heuristic chunking when off/unsupported.
+pub fn code_tree_sitter() -> bool {
+    use std::sync::OnceLock;
+    static CACHE: OnceLock<bool> = OnceLock::new();
+    *CACHE.get_or_init(|| {
+        std::env::var("ENGRAM_CODE_TREE_SITTER")
+            .ok()
+            .and_then(|s| match s.to_ascii_lowercase().as_str() {
+                "true" | "1" | "yes" | "on" => Some(true),
+                "false" | "0" | "no" | "off" => Some(false),
+                _ => None,
+            })
+            .unwrap_or(true)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -20,7 +20,7 @@ const EMBED_BATCH: usize = 64;
 /// Token budget for code chunks — conservatively below the embed-model's 512-token ceiling.
 /// Each emitted chunk must have `estimate_tokens(text) <= CODE_CHUNK_TOKEN_BUDGET`.
 /// Could become embedder-aware in a future refactor (e.g. passed in from `GatewayEmbedder`).
-const CODE_CHUNK_TOKEN_BUDGET: usize = 480;
+pub(crate) const CODE_CHUNK_TOKEN_BUDGET: usize = 480;
 
 /// Returns true if the character is in a CJK range (Unified Ideographs, Hiragana, Katakana,
 /// Hangul Syllables). Used by both `estimate_tokens` and `chunk_code`.
@@ -293,7 +293,17 @@ pub fn ingest_document(
         == Some("file");
 
     let (chunk_texts, line_ranges, entities): IngestParts = if is_code {
-        let pieces = chunk_code_with(&new.content, crate::config::code_symbol_split());
+        // Phase 4: tree-sitter boundary chunking + AST symbols when the language is supported;
+        // otherwise fall back to the heuristic symbol-split chunker.
+        let lang = if crate::config::code_tree_sitter() {
+            crate::treesit::lang_for_path(&new.key)
+        } else {
+            None
+        };
+        let pieces = match lang.and_then(|l| crate::treesit::chunk_code_ts(&new.content, l)) {
+            Some(p) if !p.is_empty() => p,
+            _ => chunk_code_with(&new.content, crate::config::code_symbol_split()),
+        };
         let texts: Vec<String> = pieces.iter().map(|(t, _, _)| t.clone()).collect();
         let ranges: Vec<Option<(i64, i64)>> = pieces
             .iter()
@@ -304,6 +314,11 @@ pub fn ingest_document(
             .iter()
             .map(|t| {
                 let mut es = extract_code_entities(t);
+                if let Some(l) = lang {
+                    if let Some(syms) = crate::treesit::extract_symbols_ts(t, l) {
+                        es.extend(syms);
+                    }
+                }
                 es.push(path_ent.clone());
                 es.sort();
                 es.dedup();
@@ -645,13 +660,18 @@ mod tests {
         };
         let doc = ingest_document(&store, &e, "repo:x", &new).unwrap();
         let rows = store.chunks_for_doc("repo:x", &doc.document_id).unwrap();
-        assert_eq!(rows.len(), 1);
-        assert_eq!((rows[0].line_start, rows[0].line_end), (Some(1), Some(2)));
-        assert!(rows[0].entities.contains(&"sym:run".to_string()));
-        assert!(rows[0]
-            .entities
-            .contains(&"import:crate::store::Store".to_string()));
-        assert!(rows[0].entities.contains(&"path:src/lib.rs".to_string()));
+        assert!(!rows.is_empty());
+        // Every code chunk carries line ranges + the path entity.
+        assert!(rows
+            .iter()
+            .all(|r| r.line_start.is_some() && r.line_end.is_some()));
+        assert!(rows
+            .iter()
+            .all(|r| r.entities.contains(&"path:src/lib.rs".to_string())));
+        // Across chunks, the symbol + import are extracted (tree-sitter may split them apart).
+        let all: Vec<String> = rows.iter().flat_map(|r| r.entities.clone()).collect();
+        assert!(all.contains(&"sym:run".to_string()));
+        assert!(all.contains(&"import:crate::store::Store".to_string()));
     }
 
     #[test]
