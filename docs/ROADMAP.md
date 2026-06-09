@@ -19,7 +19,7 @@ _Last updated: 2026-06-09. Published at `github.com/vinc-lin/engram` (origin/mai
 | 1c — `engram-mcp` server | `search_code` MCP tool (read side) | ✅ |
 | E — Validation gate | first real baseline measured + harness tightened (recall@1/5/10, line-hits) | ✅ |
 | F — Retrieval quality | symbol-split chunking + path prior → **recall@5 0.80 / ingest 0.998 PASS** | ✅ |
-| R — Reliability | embedder fallback; gate off code consolidation (trees no tool reads) | ◻️ |
+| R — Reliability | FallbackEmbedder + `ENGRAM_CONSOLIDATE_CODE` gate + tunnel guard (deploy hardened) | ✅ |
 | 2 — Architecture digests | `get_architecture` / `get_module` | ◻️ |
 | 3a — History / rationale | `why` / `find_symbol` | ◻️ |
 | 3b — Conventions | `get_conventions` | ◻️ |
