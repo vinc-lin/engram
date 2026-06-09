@@ -1,5 +1,6 @@
 pub mod api;
 pub mod config;
+pub mod conventions;
 pub mod embed;
 pub mod error;
 pub mod ingest;

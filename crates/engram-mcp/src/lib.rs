@@ -1,7 +1,7 @@
 // engram-mcp: MCP stdio server exposing the engram code-knowledge tools.
 //
 // stdio (newline-delimited JSON-RPC 2.0) transport. Tools: search_code, get_architecture,
-// get_module, why, find_symbol. Future: streamable-HTTP transport (Phase 4).
+// get_module, why, find_symbol, get_conventions. Future: streamable-HTTP transport (Phase 4).
 
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -49,6 +49,8 @@ pub trait CodeSearch {
     fn get_module(&self, path: &str, query: &str, limit: usize) -> Result<Vec<Digest>, String>;
     /// Search the repo's git history (commit messages) for commits explaining a change.
     fn why(&self, query: &str, limit: usize) -> Result<Vec<CommitHit>, String>;
+    /// Read the repo's extracted coding-conventions document.
+    fn get_conventions(&self) -> Result<String, String>;
 }
 
 /// Wire-shape returned by the engram code-search endpoint.
@@ -77,6 +79,12 @@ struct RawCommit {
     title: String,
     author: String,
     score: f64,
+}
+
+/// Wire-shape of the conventions doc (other doc fields ignored).
+#[derive(Deserialize)]
+struct RawConventions {
+    content: String,
 }
 
 pub struct HttpCodeSearch {
@@ -191,6 +199,29 @@ impl CodeSearch for HttpCodeSearch {
                 score: c.score,
             })
             .collect())
+    }
+
+    fn get_conventions(&self) -> Result<String, String> {
+        let endpoint = format!("{}/v1/{}/conventions", self.url, self.namespace);
+        let resp = self
+            .client
+            .get(&endpoint)
+            .bearer_auth(&self.token)
+            .send()
+            .map_err(|e| e.to_string())?;
+        let status = resp.status();
+        if status.as_u16() == 404 {
+            return Ok("No conventions yet — run the conventions rebuild.".to_string());
+        }
+        if !status.is_success() {
+            return Err(format!(
+                "HTTP {}: {}",
+                status,
+                resp.text().unwrap_or_default()
+            ));
+        }
+        let raw: RawConventions = resp.json().map_err(|e| e.to_string())?;
+        Ok(raw.content)
     }
 }
 
@@ -331,6 +362,14 @@ fn find_symbol_tool_def() -> Value {
     })
 }
 
+fn get_conventions_tool_def() -> Value {
+    json!({
+        "name": "get_conventions",
+        "description": "Read the project's extracted coding conventions (formatting, patterns, config-derived rules).",
+        "inputSchema": { "type": "object", "properties": {} }
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Dispatch — the unit-tested core
 // ---------------------------------------------------------------------------
@@ -357,7 +396,7 @@ pub fn dispatch(req: &Value, backend: &dyn CodeSearch) -> Option<Value> {
         "tools/list" => Some(json!({
             "jsonrpc": "2.0",
             "id": id,
-            "result": { "tools": [search_code_tool_def(), get_architecture_tool_def(), get_module_tool_def(), why_tool_def(), find_symbol_tool_def()] }
+            "result": { "tools": [search_code_tool_def(), get_architecture_tool_def(), get_module_tool_def(), why_tool_def(), find_symbol_tool_def(), get_conventions_tool_def()] }
         })),
 
         "tools/call" => {
@@ -383,6 +422,7 @@ pub fn dispatch(req: &Value, backend: &dyn CodeSearch) -> Option<Value> {
                     let name = args.get("name").and_then(Value::as_str).unwrap_or("");
                     backend.search(name, limit).map(|h| format_hits(&h))
                 }
+                "get_conventions" => backend.get_conventions(),
                 _ => {
                     return Some(json!({
                         "jsonrpc": "2.0",
@@ -460,6 +500,9 @@ mod tests {
                 score: 0.0,
             }])
         }
+        fn get_conventions(&self) -> Result<String, String> {
+            Ok("- format with rustfmt (evidence: rustfmt.toml)".into())
+        }
     }
 
     struct ErrorSearch(String);
@@ -475,6 +518,9 @@ mod tests {
             Err(self.0.clone())
         }
         fn why(&self, _q: &str, _l: usize) -> Result<Vec<CommitHit>, String> {
+            Err(self.0.clone())
+        }
+        fn get_conventions(&self) -> Result<String, String> {
             Err(self.0.clone())
         }
     }
@@ -572,6 +618,19 @@ mod tests {
         assert!(names.contains(&"get_module"));
         assert!(names.contains(&"why"));
         assert!(names.contains(&"find_symbol"));
+        assert!(names.contains(&"get_conventions"));
+    }
+
+    #[test]
+    fn tools_call_get_conventions_returns_text() {
+        let req = json!({
+            "jsonrpc": "2.0", "id": 11, "method": "tools/call",
+            "params": { "name": "get_conventions", "arguments": {} }
+        });
+        let resp = dispatch(&req, &no_hits()).unwrap();
+        assert_eq!(resp["result"]["isError"], false);
+        let text = resp["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("rustfmt"));
     }
 
     #[test]

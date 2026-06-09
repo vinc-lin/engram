@@ -18,6 +18,7 @@ pub struct AppState {
     pub store: Store,
     pub token: String,
     pub embedder: Arc<dyn Embedder>,
+    pub chat: Arc<dyn crate::llm::ChatClient>,
 }
 
 async fn health() -> &'static str {
@@ -38,6 +39,11 @@ pub fn app(state: AppState) -> Router {
         .route("/v1/:namespace/tree", post(tree_query))
         .route("/v1/:namespace/code/architecture", post(get_architecture))
         .route("/v1/:namespace/code/module", post(get_module))
+        .route(
+            "/v1/:namespace/conventions/rebuild",
+            post(rebuild_conventions_handler),
+        )
+        .route("/v1/:namespace/conventions", get(get_conventions_handler))
         .route_layer(middleware::from_fn_with_state(state.clone(), auth));
 
     Router::new()
@@ -289,6 +295,41 @@ async fn get_module(
     }
 }
 
+/// Phase 3b: (re)build the conventions doc from config files + digests (LLM, off the runtime).
+async fn rebuild_conventions_handler(
+    State(state): State<AppState>,
+    Path(namespace): Path<String>,
+) -> Response {
+    let result = tokio::task::spawn_blocking(move || {
+        crate::conventions::rebuild_conventions(
+            &state.store,
+            state.chat.as_ref(),
+            state.embedder.as_ref(),
+            &namespace,
+            2000,
+        )
+    })
+    .await;
+    match result {
+        Ok(Ok(doc)) => Json(doc).into_response(),
+        Ok(Err(e)) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+/// Phase 3b: read the conventions doc from the `<ns>:meta` namespace.
+async fn get_conventions_handler(
+    State(state): State<AppState>,
+    Path(namespace): Path<String>,
+) -> Response {
+    let meta_ns = crate::conventions::meta_namespace(&namespace);
+    match state.store.get_by_key(&meta_ns, "conventions") {
+        Ok(Some(doc)) => Json(doc).into_response(),
+        Ok(None) => (StatusCode::NOT_FOUND, "no conventions (run rebuild)").into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -309,6 +350,9 @@ mod tests {
             store: store.clone(),
             token: "secret".into(),
             embedder: embedder.clone(),
+            chat: std::sync::Arc::new(crate::llm::FakeChatClient::ok(
+                "- use rustfmt for formatting (evidence: rustfmt.toml)",
+            )),
         };
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -424,6 +468,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn conventions_rebuild_and_get() {
+        let (base, store, embedder, _d) = spawn_full().await;
+        let new = crate::model::NewDoc {
+            key: "rustfmt.toml".into(),
+            title: "rustfmt.toml".into(),
+            content: "max_width = 100\n".into(),
+            author: "code".into(),
+            taint: crate::model::Taint::Internal,
+            meta: Some(serde_json::json!({ "kind": "file" })),
+        };
+        crate::ingest::ingest_document(&store, embedder.as_ref(), "repo:demo", &new).unwrap();
+
+        let client = reqwest::Client::new();
+        // Before rebuild → 404.
+        let resp = client
+            .get(format!("{base}/v1/repo:demo/conventions"))
+            .bearer_auth("secret")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 404);
+        // Rebuild (uses the FakeChatClient wired into spawn_full).
+        let resp = client
+            .post(format!("{base}/v1/repo:demo/conventions/rebuild"))
+            .bearer_auth("secret")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+        // Now GET returns the conventions doc.
+        let resp = client
+            .get(format!("{base}/v1/repo:demo/conventions"))
+            .bearer_auth("secret")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+        let doc: serde_json::Value = resp.json().await.unwrap();
+        assert!(doc["content"].as_str().unwrap().contains("rustfmt"));
+    }
+
+    #[tokio::test]
     async fn code_search_endpoint_returns_path_line() {
         let (base, store, embedder, _d) = spawn_full().await;
         for (k, c) in [
@@ -472,6 +558,7 @@ mod tests {
             store,
             token: "secret".into(),
             embedder: std::sync::Arc::new(crate::embed::HashEmbedder::new(64)),
+            chat: std::sync::Arc::new(crate::llm::FakeChatClient::ok("conventions")),
         };
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();

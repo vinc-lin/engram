@@ -22,7 +22,7 @@ _Last updated: 2026-06-09. Published at `github.com/vinc-lin/engram` (origin/mai
 | R — Reliability | FallbackEmbedder + `ENGRAM_CONSOLIDATE_CODE` gate + tunnel guard (deploy hardened) | ✅ |
 | 2 — Architecture digests | code-tuned module/global trees + `get_architecture`/`get_module` (3 MCP tools) | 🔄 |
 | 3a — History / rationale | git-history ingest (`index-history`) + `why`/`find_symbol` (5 MCP tools) | 🔄 |
-| 3b — Conventions | `get_conventions` | ◻️ |
+| 3b — Conventions | config+digest extraction → `:meta` doc + `get_conventions` (6 MCP tools) | 🔄 |
 | 4 — Depth | tree-sitter chunking, reseal, more languages | ◻️ |
 
 The **MVP closed loop is complete**: `engram-index index <repo>` → engram (code-mode ingest,

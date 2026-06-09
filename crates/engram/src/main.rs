@@ -52,14 +52,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
+    let chat: Arc<dyn engram::llm::ChatClient> = Arc::new(GatewayChatClient::new(
+        cfg.gateway_url.clone(),
+        cfg.gateway_key.clone(),
+        cfg.llm_model.clone(),
+        cfg.llm_timeout_secs,
+    ));
     let processor = Arc::new(TreeProcessor {
         embedder: embedder.clone(),
-        chat: Arc::new(GatewayChatClient::new(
-            cfg.gateway_url.clone(),
-            cfg.gateway_key.clone(),
-            cfg.llm_model.clone(),
-            cfg.llm_timeout_secs,
-        )),
+        chat: chat.clone(),
         audit: Arc::new(HttpAuditSink::new(cfg.audit_url.clone())),
         cfg: cfg.clone(),
         vault: cfg.vault_dir.clone().map(|d| engram::vault::Vault::new(&d)),
@@ -89,6 +90,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         store,
         token: cfg.auth_token,
         embedder,
+        chat,
     };
     let listener = tokio::net::TcpListener::bind(&cfg.bind_addr).await?;
     tracing::info!("engram listening on {}", cfg.bind_addr);
