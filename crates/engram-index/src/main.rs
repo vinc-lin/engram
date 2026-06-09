@@ -1,6 +1,7 @@
 use clap::{Parser, Subcommand};
 use engram_index::{
-    client::{delete_doc, post_doc},
+    client::{delete_doc, post_doc, post_doc_with_meta},
+    commits::{parse_git_log, GIT_LOG_FORMAT},
     hook::install_post_commit_hook,
     parse_diff_line, should_index, DiffEntry,
 };
@@ -30,6 +31,8 @@ enum Commands {
     Index(IndexArgs),
     /// Apply changes since last index run (falls back to full index).
     Reindex(IndexArgs),
+    /// Ingest git history (commits) into the history namespace for `why` / `find_symbol`.
+    IndexHistory(HistoryArgs),
     /// Install a post-commit git hook that calls `reindex`.
     InstallHook(HookArgs),
 }
@@ -60,6 +63,28 @@ struct IndexArgs {
 }
 
 #[derive(clap::Args)]
+struct HistoryArgs {
+    /// Path to the git repository root.
+    path: PathBuf,
+
+    /// History namespace (convention: `repo:<id>:history`).
+    #[arg(long)]
+    namespace: String,
+
+    /// Base URL of the engram server (env: ENGRAM_URL).
+    #[arg(long, env = "ENGRAM_URL", default_value = "http://127.0.0.1:8088")]
+    url: String,
+
+    /// Bearer token (env: ENGRAM_TOKEN).
+    #[arg(long, env = "ENGRAM_TOKEN", default_value = "")]
+    token: String,
+
+    /// Limit to the most recent N commits (0 = all).
+    #[arg(long, default_value_t = 0)]
+    max: usize,
+}
+
+#[derive(clap::Args)]
 struct HookArgs {
     /// Path to the git repository root.
     path: PathBuf,
@@ -79,6 +104,7 @@ fn main() {
     let result = match cli.command {
         Commands::Index(args) => cmd_index(args, false),
         Commands::Reindex(args) => cmd_index(args, true),
+        Commands::IndexHistory(args) => cmd_index_history(args),
         Commands::InstallHook(args) => cmd_install_hook(args),
     };
     if let Err(e) = result {
@@ -138,6 +164,50 @@ fn cmd_install_hook(args: HookArgs) -> Result<(), String> {
                 args.url,
             );
         }
+    }
+    Ok(())
+}
+
+// ── history index ──────────────────────────────────────────────────────────────
+
+fn cmd_index_history(args: HistoryArgs) -> Result<(), String> {
+    let repo = args
+        .path
+        .canonicalize()
+        .map_err(|e| format!("cannot resolve path: {e}"))?;
+    let client = make_client()?;
+    let output = git_log_history(&repo, args.max)?;
+    let commits = parse_git_log(&output);
+    let total = commits.len();
+    let mut ok = 0usize;
+    let mut failed = 0usize;
+    for c in &commits {
+        let author = if c.email.is_empty() {
+            "git"
+        } else {
+            c.email.as_str()
+        };
+        match post_doc_with_meta(
+            &client,
+            &args.url,
+            &args.namespace,
+            &args.token,
+            &c.key(),
+            &c.title(),
+            &c.content(),
+            author,
+            c.meta(),
+        ) {
+            Ok(()) => ok += 1,
+            Err(e) => {
+                eprintln!("  FAIL {}: {e}", c.key());
+                failed += 1;
+            }
+        }
+    }
+    println!("engram-index: history total={total} ok={ok} failed={failed}");
+    if failed > 0 {
+        return Err(format!("{failed} commit(s) failed to index"));
     }
     Ok(())
 }
@@ -423,6 +493,26 @@ fn git_diff_name_status(repo: &Path, last_sha: &str) -> Result<String, String> {
         ])
         .output()
         .map_err(|e| format!("git diff failed: {e}"))?;
+    if !out.status.success() {
+        return Err(String::from_utf8_lossy(&out.stderr).into_owned());
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+fn git_log_history(repo: &Path, max: usize) -> Result<String, String> {
+    let mut cmd = std::process::Command::new("git");
+    cmd.args([
+        "-C",
+        &repo.to_string_lossy(),
+        "log",
+        "--no-merges",
+        "--name-only",
+        &format!("--pretty=format:{GIT_LOG_FORMAT}"),
+    ]);
+    if max > 0 {
+        cmd.arg(format!("-n{max}"));
+    }
+    let out = cmd.output().map_err(|e| format!("git log failed: {e}"))?;
     if !out.status.success() {
         return Err(String::from_utf8_lossy(&out.stderr).into_owned());
     }

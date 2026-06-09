@@ -19,7 +19,7 @@ pub fn build_by_key_url(base_url: &str, namespace: &str, key: &str) -> String {
 
 // ── HTTP helpers ──────────────────────────────────────────────────────────────
 
-/// POST a document to engram.  Retries up to 3 times on transport errors or 5xx.
+/// POST a code/file document (meta.kind = "file"). Retries up to 3 times on transport/5xx.
 pub fn post_doc(
     client: &Client,
     base_url: &str,
@@ -29,13 +29,39 @@ pub fn post_doc(
     content: &str,
     author: &str,
 ) -> Result<(), String> {
+    post_doc_with_meta(
+        client,
+        base_url,
+        namespace,
+        token,
+        key,
+        key,
+        content,
+        author,
+        json!({ "kind": "file" }),
+    )
+}
+
+/// POST a document with an explicit title and `meta` JSON. Retries up to 3 times on transport/5xx.
+#[allow(clippy::too_many_arguments)]
+pub fn post_doc_with_meta(
+    client: &Client,
+    base_url: &str,
+    namespace: &str,
+    token: &str,
+    key: &str,
+    title: &str,
+    content: &str,
+    author: &str,
+    meta: serde_json::Value,
+) -> Result<(), String> {
     let url = format!("{}/v1/{}/docs", base_url.trim_end_matches('/'), namespace);
     let body = json!({
         "key": key,
-        "title": key,
+        "title": title,
         "content": content,
         "author": author,
-        "meta": { "kind": "file" }
+        "meta": meta
     });
 
     retry(3, || {

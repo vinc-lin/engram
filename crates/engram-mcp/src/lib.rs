@@ -1,7 +1,7 @@
-// engram-mcp: MCP stdio server exposing search_code.
+// engram-mcp: MCP stdio server exposing the engram code-knowledge tools.
 //
-// Phase 1: stdio (newline-delimited JSON-RPC 2.0) transport + search_code tool only.
-// Future phases: streamable-HTTP transport; tools get_architecture, why, find_symbol.
+// stdio (newline-delimited JSON-RPC 2.0) transport. Tools: search_code, get_architecture,
+// get_module, why, find_symbol. Future: streamable-HTTP transport (Phase 4).
 
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -28,6 +28,15 @@ pub struct Digest {
     pub score: f64,
 }
 
+/// A commit hit from the history namespace (the `why` tool).
+#[derive(Debug, Clone)]
+pub struct CommitHit {
+    pub key: String, // commit:<sha>
+    pub title: String,
+    pub author: String,
+    pub score: f64,
+}
+
 // ---------------------------------------------------------------------------
 // Backend trait + real HTTP impl
 // ---------------------------------------------------------------------------
@@ -38,6 +47,8 @@ pub trait CodeSearch {
     fn get_architecture(&self, query: &str, limit: usize) -> Result<Vec<Digest>, String>;
     /// One directory's digest (`path` is a repo-relative directory = the module key).
     fn get_module(&self, path: &str, query: &str, limit: usize) -> Result<Vec<Digest>, String>;
+    /// Search the repo's git history (commit messages) for commits explaining a change.
+    fn why(&self, query: &str, limit: usize) -> Result<Vec<CommitHit>, String>;
 }
 
 /// Wire-shape returned by the engram code-search endpoint.
@@ -56,6 +67,15 @@ struct RawDigest {
     tree_key: String,
     label: Option<String>,
     body: String,
+    score: f64,
+}
+
+/// Wire-shape of a history /query hit (flattened doc fields; extras ignored).
+#[derive(Deserialize)]
+struct RawCommit {
+    key: String,
+    title: String,
+    author: String,
     score: f64,
 }
 
@@ -142,6 +162,36 @@ impl CodeSearch for HttpCodeSearch {
             json!({ "path": path, "query": query, "limit": limit }),
         )
     }
+
+    fn why(&self, query: &str, limit: usize) -> Result<Vec<CommitHit>, String> {
+        // `why` queries the history namespace (`<ns>:history`) via the standard /query endpoint.
+        let endpoint = format!("{}/v1/{}:history/query", self.url, self.namespace);
+        let resp = self
+            .client
+            .post(&endpoint)
+            .bearer_auth(&self.token)
+            .json(&json!({ "query": query, "limit": limit }))
+            .send()
+            .map_err(|e| e.to_string())?;
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(format!(
+                "HTTP {}: {}",
+                status,
+                resp.text().unwrap_or_default()
+            ));
+        }
+        let raw: Vec<RawCommit> = resp.json().map_err(|e| e.to_string())?;
+        Ok(raw
+            .into_iter()
+            .map(|c| CommitHit {
+                key: c.key,
+                title: c.title,
+                author: c.author,
+                score: c.score,
+            })
+            .collect())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -176,6 +226,21 @@ pub fn format_digests(items: &[Digest]) -> String {
             let head = d.label.clone().unwrap_or_else(|| d.tree_key.clone());
             let body: String = d.body.chars().take(600).collect();
             format!("[{}]  (score {:.2})\n{}", head, d.score, body)
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+pub fn format_commits(hits: &[CommitHit]) -> String {
+    if hits.is_empty() {
+        return "No matching commits (is the history namespace indexed?).".to_string();
+    }
+    hits.iter()
+        .map(|c| {
+            format!(
+                "{}  by {}  (score {:.2})\n{}",
+                c.key, c.author, c.score, c.title
+            )
         })
         .collect::<Vec<_>>()
         .join("\n\n")
@@ -236,6 +301,36 @@ fn get_module_tool_def() -> Value {
     })
 }
 
+fn why_tool_def() -> Value {
+    json!({
+        "name": "why",
+        "description": "Find the commits that explain WHY code is the way it is — searches the repo's git history (commit messages + changed files) for the most relevant commits.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": { "type": "string", "description": "natural-language question about why/when something changed" },
+                "limit": { "type": "integer", "description": "max commits (default 10)" }
+            },
+            "required": ["query"]
+        }
+    })
+}
+
+fn find_symbol_tool_def() -> Value {
+    json!({
+        "name": "find_symbol",
+        "description": "Locate where a symbol (function/type/class/etc.) is defined or used in the indexed code.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": { "type": "string", "description": "symbol name, e.g. 'process_doc'" },
+                "limit": { "type": "integer", "description": "max results (default 10)" }
+            },
+            "required": ["name"]
+        }
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Dispatch — the unit-tested core
 // ---------------------------------------------------------------------------
@@ -262,7 +357,7 @@ pub fn dispatch(req: &Value, backend: &dyn CodeSearch) -> Option<Value> {
         "tools/list" => Some(json!({
             "jsonrpc": "2.0",
             "id": id,
-            "result": { "tools": [search_code_tool_def(), get_architecture_tool_def(), get_module_tool_def()] }
+            "result": { "tools": [search_code_tool_def(), get_architecture_tool_def(), get_module_tool_def(), why_tool_def(), find_symbol_tool_def()] }
         })),
 
         "tools/call" => {
@@ -282,6 +377,11 @@ pub fn dispatch(req: &Value, backend: &dyn CodeSearch) -> Option<Value> {
                     backend
                         .get_module(path, query, limit)
                         .map(|d| format_digests(&d))
+                }
+                "why" => backend.why(query, limit).map(|c| format_commits(&c)),
+                "find_symbol" => {
+                    let name = args.get("name").and_then(Value::as_str).unwrap_or("");
+                    backend.search(name, limit).map(|h| format_hits(&h))
                 }
                 _ => {
                     return Some(json!({
@@ -352,6 +452,14 @@ mod tests {
                 score: 0.0,
             }])
         }
+        fn why(&self, _q: &str, _l: usize) -> Result<Vec<CommitHit>, String> {
+            Ok(vec![CommitHit {
+                key: "commit:abc123".into(),
+                title: "fix: take the write lock".into(),
+                author: "ada@x.io".into(),
+                score: 0.0,
+            }])
+        }
     }
 
     struct ErrorSearch(String);
@@ -364,6 +472,9 @@ mod tests {
             Err(self.0.clone())
         }
         fn get_module(&self, _p: &str, _q: &str, _l: usize) -> Result<Vec<Digest>, String> {
+            Err(self.0.clone())
+        }
+        fn why(&self, _q: &str, _l: usize) -> Result<Vec<CommitHit>, String> {
             Err(self.0.clone())
         }
     }
@@ -459,6 +570,40 @@ mod tests {
         assert!(names.contains(&"search_code"));
         assert!(names.contains(&"get_architecture"));
         assert!(names.contains(&"get_module"));
+        assert!(names.contains(&"why"));
+        assert!(names.contains(&"find_symbol"));
+    }
+
+    #[test]
+    fn tools_call_why_formats_commits() {
+        let req = json!({
+            "jsonrpc": "2.0", "id": 9, "method": "tools/call",
+            "params": { "name": "why", "arguments": { "query": "why the write lock" } }
+        });
+        let resp = dispatch(&req, &no_hits()).unwrap();
+        assert_eq!(resp["result"]["isError"], false);
+        let text = resp["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("commit:abc123"));
+        assert!(text.contains("fix: take the write lock"));
+    }
+
+    #[test]
+    fn tools_call_find_symbol_uses_code_search() {
+        let hits = vec![fake_hit(
+            "src/tree.rs",
+            218,
+            264,
+            "fn process_doc() {}",
+            0.9,
+        )];
+        let req = json!({
+            "jsonrpc": "2.0", "id": 10, "method": "tools/call",
+            "params": { "name": "find_symbol", "arguments": { "name": "process_doc" } }
+        });
+        let resp = dispatch(&req, &FakeSearch(hits)).unwrap();
+        assert_eq!(resp["result"]["isError"], false);
+        let text = resp["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("src/tree.rs:218-264"));
     }
 
     #[test]

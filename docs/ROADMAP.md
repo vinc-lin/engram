@@ -21,7 +21,7 @@ _Last updated: 2026-06-09. Published at `github.com/vinc-lin/engram` (origin/mai
 | F — Retrieval quality | symbol-split chunking + path prior → **recall@5 0.80 / ingest 0.998 PASS** | ✅ |
 | R — Reliability | FallbackEmbedder + `ENGRAM_CONSOLIDATE_CODE` gate + tunnel guard (deploy hardened) | ✅ |
 | 2 — Architecture digests | code-tuned module/global trees + `get_architecture`/`get_module` (3 MCP tools) | 🔄 |
-| 3a — History / rationale | `why` / `find_symbol` | ◻️ |
+| 3a — History / rationale | git-history ingest (`index-history`) + `why`/`find_symbol` (5 MCP tools) | 🔄 |
 | 3b — Conventions | `get_conventions` | ◻️ |
 | 4 — Depth | tree-sitter chunking, reseal, more languages | ◻️ |
 
