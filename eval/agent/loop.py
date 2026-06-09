@@ -73,6 +73,7 @@ def run(task, arm, model, toolbox, caps):
     seen = {}
     strikes = 0
     final = []
+    observations = []
     terminated = "max_turns"
     start = time.time()
 
@@ -80,9 +81,14 @@ def run(task, arm, model, toolbox, caps):
         if time.time() - start > caps["deadline"]:
             terminated = "deadline"
             break
-        at = llm.chat(messages, toolbox.specs(arm), model=model,
-                      max_tokens=caps["max_tokens"], temperature=caps["temperature"],
-                      enable_thinking=caps["enable_thinking"], timeout=caps["deadline"])
+        try:
+            at = llm.chat(messages, toolbox.specs(arm), model=model,
+                          max_tokens=caps["max_tokens"], temperature=caps["temperature"],
+                          enable_thinking=caps["enable_thinking"], timeout=caps["deadline"])
+        except Exception as e:  # noqa: BLE001 — never crash a run; record + stop
+            transcript.append({"role": "error", "where": "loop", "detail": str(e)[:300]})
+            terminated = "error"
+            break
         for k in usage_tot:
             usage_tot[k] += at.usage.get(k, 0)
         transcript.append({"role": "assistant", "content": at.content,
@@ -111,6 +117,7 @@ def run(task, arm, model, toolbox, caps):
             messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
             transcript.append({"role": "tool", "name": tc.name, "args": tc.args,
                                "result_len": len(result)})
+            observations.append(f"[{tc.name} {json.dumps(tc.args)[:80]}]\n{result[:300]}")
             if strikes >= caps["repeat_strikes"]:
                 terminated = "repeat_strikes"
                 stop = True
@@ -118,17 +125,27 @@ def run(task, arm, model, toolbox, caps):
         if stop:
             break
 
-    # If we stopped without a final footprint, force one last no-tools turn for the JSON.
+    # If we stopped without a final footprint, do a CLEAN-context final turn: no tool_calls in the
+    # history (avoids a gateway 400 and DeepSeek's tool-markup leak), just the investigation notes.
     if terminated != "final":
-        messages.append({"role": "user", "content":
-                         "Stop searching. Output your final feature_footprint JSON now."})
-        at = llm.chat(messages, [], model=model, max_tokens=caps["max_tokens"],
-                      temperature=caps["temperature"], enable_thinking=False,
-                      timeout=caps["deadline"])
-        for k in usage_tot:
-            usage_tot[k] += at.usage.get(k, 0)
-        final = parse_footprint(at.content) or final
-        transcript.append({"role": "assistant", "content": at.content, "forced_final": True})
+        notes = "\n".join(observations[-50:]) or "(no tool observations)"
+        clean = [
+            {"role": "system", "content": SYSTEM},
+            {"role": "user", "content": task},
+            {"role": "assistant", "content": "My investigation notes (tool observations):\n" + notes[:12000]},
+            {"role": "user", "content": "Based ONLY on the notes above, output your final "
+                                        "feature_footprint JSON now. No prose, no tools."},
+        ]
+        try:
+            at = llm.chat(clean, [], model=model, max_tokens=caps["max_tokens"],
+                          temperature=caps["temperature"], enable_thinking=False,
+                          timeout=caps["deadline"])
+            for k in usage_tot:
+                usage_tot[k] += at.usage.get(k, 0)
+            final = parse_footprint(at.content) or final
+            transcript.append({"role": "assistant", "content": at.content, "forced_final": True})
+        except Exception as e:  # noqa: BLE001
+            transcript.append({"role": "error", "where": "forced_final", "detail": str(e)[:300]})
 
     return {
         "arm": arm, "model": model, "terminated": terminated,

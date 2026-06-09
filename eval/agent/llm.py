@@ -96,7 +96,7 @@ def _recover_tool_calls_from_content(content):
 
 
 def chat(messages, tools, model="deepseek-chat", max_tokens=1024, temperature=0.1,
-         enable_thinking=False, timeout=180):
+         enable_thinking=False, timeout=180, tool_choice="auto"):
     """One chat-completions round-trip. Returns an AssistantTurn (normalized across models)."""
     body = {
         "model": model,
@@ -106,7 +106,7 @@ def chat(messages, tools, model="deepseek-chat", max_tokens=1024, temperature=0.
     }
     if tools:
         body["tools"] = tools
-        body["tool_choice"] = "auto"
+        body["tool_choice"] = tool_choice
     # Qwen3 thinking-mode controls (ignored by DeepSeek/the gateway if unsupported).
     if "qwen" in model.lower():
         body["extra_body"] = {"enable_thinking": bool(enable_thinking)}
@@ -117,8 +117,12 @@ def chat(messages, tools, model="deepseek-chat", max_tokens=1024, temperature=0.
         headers={"Authorization": f"Bearer {GATEWAY_KEY}", "Content-Type": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        data = json.load(resp)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.load(resp)
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", "replace")[:400]
+        raise RuntimeError(f"gateway HTTP {e.code}: {detail}") from None
 
     choice = data["choices"][0]
     msg = choice.get("message", {})
