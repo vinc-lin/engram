@@ -23,7 +23,7 @@ _Last updated: 2026-06-09. Published at `github.com/vinc-lin/engram` (origin/mai
 | 2 — Architecture digests | code-tuned module/global trees + `get_architecture`/`get_module` (3 MCP tools) | 🔄 |
 | 3a — History / rationale | git-history ingest (`index-history`) + `why`/`find_symbol` (5 MCP tools) | 🔄 |
 | 3b — Conventions | config+digest extraction → `:meta` doc + `get_conventions` (6 MCP tools) | 🔄 |
-| 4 — Depth | tree-sitter chunking, reseal, more languages | ◻️ |
+| 4 — Depth | tree-sitter chunking + AST symbols (6 langs) + MCP HTTP; reseal via stale-flush sweeper | ✅ |
 
 The **MVP closed loop is complete**: `engram-index index <repo>` → engram (code-mode ingest,
 robust) → `engram-mcp search_code` → coding agent. A `post-commit` hook keeps it current.
@@ -160,11 +160,16 @@ Bar: `why` returns the correct originating commit for ≥ 0.7 of ~15 labeled reg
 Conventions-extraction pass over digests + `get_conventions()`.
 Bar: ≥ ~10 distinct conventions, each spot-checked correct (no fabrication).
 
-### Phase 4 — Depth ◻️
-Tree-sitter function-boundary chunking + richer symbols (better `find_symbol` precision);
-reseal-stale-digests pass; more languages. Embedder-aware token budget stays here **only if** a
-future model swap is justified — the 2026-06-09 A/B found bge-m3 does *not* beat mxbai as a
-drop-in, so the swap is no longer assumed (see Findings / Phase F).
+### Phase 4 — Depth ✅
+Tree-sitter function/type-boundary chunking + AST symbol extraction (`treesit.rs`) across Rust,
+Python, JS, TS, TSX, Go — gated by `ENGRAM_CODE_TREE_SITTER`, falling back to the heuristic chunker
+on unsupported langs / parse failure. The MCP server gains an HTTP JSON-RPC transport
+(`ENGRAM_MCP_HTTP`) beside stdio. **Reseal-stale-digests:** the freshness goal is already met by the
+stale-flush sweeper (`gate_exceeded`'s `stale` condition seals consolidated trees whose fresh leaves
+age past `seal_flush_age_secs`); the alternative reading — rewriting an already-sealed digest on
+re-ingest — is a deliberate non-goal, as it conflicts with the **sealed-nodes-immutable** invariant.
+Embedder-aware token budget stays deferred unless a model swap is justified (the bge-m3 A/B found it
+isn't — see Findings / Phase F).
 
 ### Headline success criterion
 With-vs-without: an agent using the MCP tools scores higher on a fixed engram-question suite than
