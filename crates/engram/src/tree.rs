@@ -189,7 +189,7 @@ fn fallback_summary(buf: &[TreeNode], max_chars: usize) -> String {
 
 fn label_for(tree_kind: &str, buf: &[TreeNode], summary: &str) -> Option<String> {
     match tree_kind {
-        "source" => Some(
+        "source" | "module" => Some(
             summary
                 .lines()
                 .next()
@@ -212,9 +212,18 @@ fn label_for(tree_kind: &str, buf: &[TreeNode], summary: &str) -> Option<String>
     }
 }
 
-/// Cold pipeline for one document: fan its chunks out as leaves into the Source (by author),
-/// Global, and per-entity Topic trees, sealing each touched buffer. Re-ingest first drops the
-/// doc's prior unsealed leaves (sealed history is immutable). Optionally mirrors the doc.
+/// Directory key for a file's `module` tree: the parent directory, or "." for a root-level file.
+fn dir_key(path: &str) -> String {
+    match path.rfind('/') {
+        Some(i) => path[..i].to_string(),
+        None => ".".to_string(),
+    }
+}
+
+/// Cold pipeline for one document: fan its chunks out as leaves into summary trees, sealing each
+/// touched buffer. Prose → Source (by author) + Global + per-entity Topic. Code (Phase 2) →
+/// Module (by directory) + Global + Topic on symbols/imports. Re-ingest first drops the doc's
+/// prior unsealed leaves (sealed history is immutable). Optionally mirrors the doc.
 pub fn process_doc(store: &Store, ctx: &TreeCtx, namespace: &str, document_id: &str) -> Result<()> {
     let doc = store.get_doc(namespace, document_id)?;
     // Re-ingest always drops the doc's prior unsealed leaves (sealed history is immutable), even
@@ -235,39 +244,79 @@ pub fn process_doc(store: &Store, ctx: &TreeCtx, namespace: &str, document_id: &
         .as_ref()
         .map(|d| d.author.clone())
         .unwrap_or_else(|| "unknown".into());
+    let key = doc.as_ref().map(|d| d.key.clone()).unwrap_or_default();
     let chunks = store.chunks_for_doc(namespace, document_id)?;
     for ch in &chunks {
-        append_leaf(
-            store,
-            ctx,
-            namespace,
-            "source",
-            &author,
-            &ch.text,
-            document_id,
-            &ch.embedding,
-        )?;
-        append_leaf(
-            store,
-            ctx,
-            namespace,
-            "global",
-            "global",
-            &ch.text,
-            document_id,
-            &ch.embedding,
-        )?;
-        for e in &ch.entities {
+        if is_code {
+            // Phase 2: code fans into a directory-keyed `module` tree (instead of the author-keyed
+            // `source`), the `global` tree, and `topic` trees on symbols/imports only (not `path:`).
             append_leaf(
                 store,
                 ctx,
                 namespace,
-                "topic",
-                e,
+                "module",
+                &dir_key(&key),
                 &ch.text,
                 document_id,
                 &ch.embedding,
             )?;
+            append_leaf(
+                store,
+                ctx,
+                namespace,
+                "global",
+                "global",
+                &ch.text,
+                document_id,
+                &ch.embedding,
+            )?;
+            for e in &ch.entities {
+                if e.starts_with("sym:") || e.starts_with("import:") {
+                    append_leaf(
+                        store,
+                        ctx,
+                        namespace,
+                        "topic",
+                        e,
+                        &ch.text,
+                        document_id,
+                        &ch.embedding,
+                    )?;
+                }
+            }
+        } else {
+            append_leaf(
+                store,
+                ctx,
+                namespace,
+                "source",
+                &author,
+                &ch.text,
+                document_id,
+                &ch.embedding,
+            )?;
+            append_leaf(
+                store,
+                ctx,
+                namespace,
+                "global",
+                "global",
+                &ch.text,
+                document_id,
+                &ch.embedding,
+            )?;
+            for e in &ch.entities {
+                append_leaf(
+                    store,
+                    ctx,
+                    namespace,
+                    "topic",
+                    e,
+                    &ch.text,
+                    document_id,
+                    &ch.embedding,
+                )?;
+            }
         }
     }
     if let (Some(v), Some(d)) = (ctx.vault, doc.as_ref()) {
@@ -604,6 +653,51 @@ mod tests {
                 .len(),
             0,
             "stale unsealed leaves must be cleaned when the gate is toggled off"
+        );
+    }
+
+    #[test]
+    fn code_consolidation_uses_module_and_symbol_topic_trees() {
+        let (store, _d) = temp();
+        let e = HashEmbedder::new(16);
+        let new = crate::model::NewDoc {
+            key: "src/state/foo.rs".into(),
+            title: "src/state/foo.rs".into(),
+            content: "use baz::thing;\nfn alpha() {}".into(),
+            author: "code".into(),
+            taint: crate::model::Taint::Internal,
+            meta: Some(serde_json::json!({"kind": "file"})),
+        };
+        crate::ingest::ingest_document(&store, &e, "repo:z", &new).unwrap();
+        let job = store.claim_job().unwrap().unwrap();
+        let chat = FakeChatClient::ok("S");
+        let audit = NullAuditSink;
+        let mut cfg = Config::from_vars(|_| None);
+        cfg.consolidate_code = true;
+        let ctx = TreeCtx {
+            embedder: &e,
+            chat: &chat,
+            audit: &audit,
+            cfg: &cfg,
+            vault: None,
+        };
+        process_doc(&store, &ctx, &job.namespace, &job.document_id).unwrap();
+
+        let n = |kind: &str, key: &str| store.unsealed_nodes("repo:z", kind, key, 0).unwrap().len();
+        // Directory-keyed module tree + global; NOT the author-keyed source tree.
+        assert!(
+            n("module", "src/state") >= 1,
+            "module tree keyed by directory"
+        );
+        assert!(n("global", "global") >= 1);
+        assert_eq!(n("source", "code"), 0, "code must not use the source tree");
+        // Topic trees on symbols/imports only — never on path: entities.
+        assert!(n("topic", "sym:alpha") >= 1);
+        assert!(n("topic", "import:baz::thing") >= 1);
+        assert_eq!(
+            n("topic", "path:src/state/foo.rs"),
+            0,
+            "path: entities must not create code topic trees"
         );
     }
 
