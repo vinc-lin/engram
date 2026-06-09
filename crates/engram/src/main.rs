@@ -42,10 +42,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         primary
     };
-    // Best-effort startup reachability probe (non-fatal): surface a dead embed backend early.
-    match embedder.embed("ping") {
-        Ok(_) => tracing::info!("embedder reachable ({})", embedder.signature()),
-        Err(e) => tracing::warn!("embedder probe failed at startup: {e}"),
+    // Best-effort startup reachability probe (non-fatal). Runs on a blocking thread so the
+    // blocking reqwest call never stalls the tokio runtime — the server starts immediately.
+    {
+        let probe = embedder.clone();
+        tokio::task::spawn_blocking(move || match probe.embed("ping") {
+            Ok(_) => tracing::info!("embedder reachable ({})", probe.signature()),
+            Err(e) => tracing::warn!("embedder probe failed at startup: {e}"),
+        });
     }
 
     let processor = Arc::new(TreeProcessor {

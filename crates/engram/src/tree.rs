@@ -217,6 +217,9 @@ fn label_for(tree_kind: &str, buf: &[TreeNode], summary: &str) -> Option<String>
 /// doc's prior unsealed leaves (sealed history is immutable). Optionally mirrors the doc.
 pub fn process_doc(store: &Store, ctx: &TreeCtx, namespace: &str, document_id: &str) -> Result<()> {
     let doc = store.get_doc(namespace, document_id)?;
+    // Re-ingest always drops the doc's prior unsealed leaves (sealed history is immutable), even
+    // when consolidation is gated off below — otherwise toggling the gate strands stale leaves.
+    store.delete_unsealed_leaves_for_doc(namespace, document_id)?;
     // R2: skip cold-path consolidation for code-mode docs unless enabled — search_code reads
     // chunks directly, so code trees are unread until Phase 2 ships get_architecture/get_module.
     let is_code = doc
@@ -233,7 +236,6 @@ pub fn process_doc(store: &Store, ctx: &TreeCtx, namespace: &str, document_id: &
         .map(|d| d.author.clone())
         .unwrap_or_else(|| "unknown".into());
     let chunks = store.chunks_for_doc(namespace, document_id)?;
-    store.delete_unsealed_leaves_for_doc(namespace, document_id)?;
     for ch in &chunks {
         append_leaf(
             store,
@@ -549,6 +551,59 @@ mod tests {
                 .unwrap()
                 .is_empty(),
             "code consolidation should run when enabled"
+        );
+    }
+
+    #[test]
+    fn consolidate_code_gate_off_cleans_stale_leaves_on_reingest() {
+        let (store, _d) = temp();
+        let e = HashEmbedder::new(16);
+        let new = crate::model::NewDoc {
+            key: "src/y.rs".into(),
+            title: "src/y.rs".into(),
+            content: "fn gamma() {}".into(),
+            author: "code".into(),
+            taint: crate::model::Taint::Internal,
+            meta: Some(serde_json::json!({"kind": "file"})),
+        };
+        crate::ingest::ingest_document(&store, &e, "repo:y", &new).unwrap();
+        let job = store.claim_job().unwrap().unwrap();
+        let chat = FakeChatClient::ok("S");
+        let audit = NullAuditSink;
+
+        // consolidate_code = true → leaves exist.
+        let mut cfg_on = Config::from_vars(|_| None);
+        cfg_on.consolidate_code = true;
+        let ctx_on = TreeCtx {
+            embedder: &e,
+            chat: &chat,
+            audit: &audit,
+            cfg: &cfg_on,
+            vault: None,
+        };
+        process_doc(&store, &ctx_on, &job.namespace, &job.document_id).unwrap();
+        assert!(!store
+            .unsealed_nodes("repo:y", "global", "global", 0)
+            .unwrap()
+            .is_empty());
+
+        // Toggle off + re-process: prior unsealed leaves are cleaned even though consolidation skips.
+        let cfg_off = Config::from_vars(|_| None);
+        let ctx_off = TreeCtx {
+            embedder: &e,
+            chat: &chat,
+            audit: &audit,
+            cfg: &cfg_off,
+            vault: None,
+        };
+        process_doc(&store, &ctx_off, &job.namespace, &job.document_id).unwrap();
+        assert_eq!(
+            store
+                .unsealed_nodes("repo:y", "global", "global", 0)
+                .unwrap()
+                .len(),
+            0,
+            "stale unsealed leaves must be cleaned when the gate is toggled off"
         );
     }
 
