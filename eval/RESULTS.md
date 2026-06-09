@@ -132,10 +132,16 @@ on, consolidation off). Measured on the 35-query gold set.
 Tree-sitter isolates each definition into its own chunk, which sharpens **precision** (recall@1
 +0.057 — the best match ranks first more often), **coverage** (recall@10 0.829→0.914 = 32/35 gold
 files in top-10), and **line accuracy** (line-recall@10 +0.057 — the matched chunk's span contains
-the answer more often). recall@5 dips marginally (−0.029, ~one query slipping rank 5→6): finer
-granularity means one file can occupy several top-5 *chunk* slots, scattering distinct files
-deeper. **Lever:** dedup `search_code` results to best-chunk-per-file (or dedup paths in the metric)
-— would likely lift recall@5 back over 0.80 while keeping the @1/@10/line gains.
+the answer more often). recall@5 dips marginally (−0.029, ~one query slipping rank 5→6).
+
+**Best-chunk-per-file dedup — tested and REJECTED.** Hypothesis: the recall@5 dip was a
+duplicate-slot artifact (one finely-chunked file taking several top-5 slots), so deduping to the
+best chunk per file would recover it. Measured live: dedup left recall@1/5/10 **unchanged**
+(0.543/0.771/0.914) — the missed gold files' *best* chunk genuinely scores at rank 6–7, not a slot
+artifact — and it **regressed line-recall@10 to 0.543** (deduping discards a file's other chunks,
+including the one whose span covers the answer). Net-negative; reverted. The recall@5 dip is a real,
+small ranking effect of finer chunking — net of tree-sitter is still a clear precision / coverage /
+line-accuracy win.
 
 Ops: the re-index took ~21 min and 70 large multilingual `READMEs/*.md`/`CHANGELOG` timed out
 (engram-index *client*-side POST timeout — tree-sitter's higher chunk count makes big CJK docs
