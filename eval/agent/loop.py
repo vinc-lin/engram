@@ -132,9 +132,11 @@ def run(task, arm, model, toolbox, caps):
         if stop:
             break
 
-    # If we stopped without a final footprint, do a CLEAN-context final turn: no tool_calls in the
-    # history (avoids a gateway 400 and DeepSeek's tool-markup leak), just the investigation notes.
-    if terminated != "final":
+    # If we stopped without a (parseable) final footprint, do a CLEAN-context final turn: no
+    # tool_calls in the history (avoids a gateway 400 and DeepSeek's tool-markup leak), just the
+    # investigation notes. Runs whenever the footprint is empty — including a voluntary-but-
+    # unparseable "final" — so a run never scores 0 merely because JSON extraction failed.
+    if terminated != "final" or not final:
         notes = "\n".join(observations[-50:]) or "(no tool observations)"
         clean = [
             {"role": "system", "content": SYSTEM},
