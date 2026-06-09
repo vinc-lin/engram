@@ -12,6 +12,10 @@ pub enum Lang {
     TypeScript,
     Tsx,
     Go,
+    Kotlin,
+    Java,
+    C,
+    Cpp,
 }
 
 /// Map a file path's extension to a supported language (`None` if unsupported).
@@ -24,6 +28,12 @@ pub fn lang_for_path(path: &str) -> Option<Lang> {
         "ts" | "mts" | "cts" => Lang::TypeScript,
         "tsx" => Lang::Tsx,
         "go" => Lang::Go,
+        "kt" | "kts" => Lang::Kotlin,
+        "java" => Lang::Java,
+        "c" => Lang::C,
+        // `.h` routes to C++ (a superset of C): the C++ grammar parses the vast majority of C
+        // headers, and a parse failure falls back to the heuristic chunker (zero data loss).
+        "cc" | "cpp" | "cxx" | "c++" | "hpp" | "hh" | "hxx" | "h" => Lang::Cpp,
         _ => return None,
     })
 }
@@ -36,6 +46,10 @@ fn language(lang: Lang) -> Language {
         Lang::TypeScript => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
         Lang::Tsx => tree_sitter_typescript::LANGUAGE_TSX.into(),
         Lang::Go => tree_sitter_go::LANGUAGE.into(),
+        Lang::Kotlin => tree_sitter_kotlin_ng::LANGUAGE.into(),
+        Lang::Java => tree_sitter_java::LANGUAGE.into(),
+        Lang::C => tree_sitter_c::LANGUAGE.into(),
+        Lang::Cpp => tree_sitter_cpp::LANGUAGE.into(),
     }
 }
 
@@ -72,6 +86,42 @@ fn is_chunkable(lang: Lang, kind: &str) -> bool {
         Lang::Go => matches!(
             kind,
             "function_declaration" | "method_declaration" | "type_declaration"
+        ),
+        Lang::Kotlin => matches!(
+            kind,
+            "function_declaration"
+                | "class_declaration"
+                | "object_declaration"
+                | "property_declaration"
+                | "secondary_constructor"
+        ),
+        Lang::Java => matches!(
+            kind,
+            "method_declaration"
+                | "class_declaration"
+                | "interface_declaration"
+                | "enum_declaration"
+                | "constructor_declaration"
+                | "record_declaration"
+        ),
+        Lang::C => matches!(
+            kind,
+            "function_definition"
+                | "struct_specifier"
+                | "union_specifier"
+                | "enum_specifier"
+                | "type_definition"
+        ),
+        Lang::Cpp => matches!(
+            kind,
+            "function_definition"
+                | "struct_specifier"
+                | "union_specifier"
+                | "enum_specifier"
+                | "type_definition"
+                | "class_specifier"
+                | "namespace_definition"
+                | "template_declaration"
         ),
     }
 }
@@ -181,6 +231,11 @@ mod tests {
         assert_eq!(lang_for_path("x.ts"), Some(Lang::TypeScript));
         assert_eq!(lang_for_path("x.tsx"), Some(Lang::Tsx));
         assert_eq!(lang_for_path("x.go"), Some(Lang::Go));
+        assert_eq!(lang_for_path("Main.kt"), Some(Lang::Kotlin));
+        assert_eq!(lang_for_path("Foo.java"), Some(Lang::Java));
+        assert_eq!(lang_for_path("img.c"), Some(Lang::C));
+        assert_eq!(lang_for_path("stitch.cpp"), Some(Lang::Cpp));
+        assert_eq!(lang_for_path("native_lib.h"), Some(Lang::Cpp)); // .h -> C++ (superset)
         assert_eq!(lang_for_path("README.md"), None);
     }
 
@@ -225,5 +280,58 @@ mod tests {
     #[test]
     fn empty_content_is_no_chunks() {
         assert_eq!(chunk_code_ts("", Lang::Rust).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn kotlin_chunks_and_symbols() {
+        let src = "package x\n\nimport y.Z\n\nfun alpha(n: Int): Int {\n    return n + 1\n}\n\nclass Beta(val a: Int) {\n    fun method() {}\n}\n";
+        let out = chunk_code_ts(src, Lang::Kotlin).unwrap();
+        let joined: Vec<&str> = out.iter().map(|(t, _, _)| t.as_str()).collect();
+        assert!(
+            joined.iter().any(|t| t.contains("fun alpha")),
+            "alpha chunk"
+        );
+        assert!(
+            joined.iter().any(|t| t.contains("class Beta")),
+            "Beta chunk"
+        );
+        let syms = extract_symbols_ts(src, Lang::Kotlin).unwrap();
+        assert!(syms.contains(&"sym:alpha".to_string()), "got {syms:?}");
+        assert!(syms.contains(&"sym:Beta".to_string()), "got {syms:?}");
+    }
+
+    #[test]
+    fn java_chunks_and_symbols() {
+        let src = "package x;\n\nimport y.Z;\n\nclass Foo {\n    int alpha(int n) { return n + 1; }\n    void beta() {}\n}\n";
+        let out = chunk_code_ts(src, Lang::Java).unwrap();
+        assert!(out.iter().any(|(t, _, _)| t.contains("class Foo")));
+        let syms = extract_symbols_ts(src, Lang::Java).unwrap();
+        assert!(syms.contains(&"sym:Foo".to_string()), "got {syms:?}");
+        assert!(syms.contains(&"sym:alpha".to_string()), "got {syms:?}");
+    }
+
+    #[test]
+    fn c_chunks_cover_function_and_struct() {
+        let src = "#include <stdio.h>\n\nstruct Pixel { int r, g, b; };\n\nint dewarp(int x) {\n    return x * 2;\n}\n";
+        let out = chunk_code_ts(src, Lang::C).unwrap();
+        let joined: Vec<&str> = out.iter().map(|(t, _, _)| t.as_str()).collect();
+        assert!(joined.iter().any(|t| t.contains("struct Pixel")));
+        assert!(joined.iter().any(|t| t.contains("int dewarp")));
+    }
+
+    #[test]
+    fn cpp_chunks_namespace_and_class() {
+        let src = "namespace avm {\n\nclass Stitcher {\npublic:\n    int blend(int a) { return a; }\n};\n\nvoid run() {}\n\n}\n";
+        let out = chunk_code_ts(src, Lang::Cpp).unwrap();
+        let joined: Vec<&str> = out.iter().map(|(t, _, _)| t.as_str()).collect();
+        assert!(joined
+            .iter()
+            .any(|t| t.contains("class Stitcher") || t.contains("namespace avm")));
+    }
+
+    #[test]
+    fn malformed_cpp_does_not_panic() {
+        // Garbage / truncated C++ still parses to a (possibly error-laden) tree, never panics.
+        assert!(chunk_code_ts("class { void (( ; namespace }{", Lang::Cpp).is_some());
     }
 }

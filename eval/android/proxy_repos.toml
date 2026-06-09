@@ -1,0 +1,28 @@
+# Proxy repos for the AVM (Around View Monitor) feature-migration evaluation.
+# Cloned shallow (--depth 1) into ~/engram-eval/proxies/ at the pinned SHAs below
+# on 2026-06-10. Indexed into a dedicated eval DB (~/engram-eval/engram-eval.db),
+# never the live deploy DB.
+
+[[repo]]
+name = "ndk-samples"
+url = "https://github.com/android/ndk-samples.git"
+sha = "988d73bed0fd3dd362d8041a34f958be76769773"
+path = "~/engram-eval/proxies/ndk-samples"
+namespace = "repo:ndk-samples"
+role = "correctness workhorse — official Kotlin/Java + C/C++ NDK + Android.bp/CMake; exercises all four new grammars + build files"
+
+[[repo]]
+name = "libxcam"
+url = "https://github.com/intel/libxcam.git"
+sha = "eacfb5aa8373f50848d82d59bd8f81c51bf23f7b"
+path = "~/engram-eval/proxies/libxcam"
+namespace = "repo:libxcam"
+role = "system-level / scale stress — C/C++ 360-degree surround-view stitching, fisheye de-warp"
+
+[[repo]]
+name = "android-gpuimage-plus"
+url = "https://github.com/wysaid/android-gpuimage-plus.git"
+sha = "a2807447e12b68ecca8ea085b89b14ef76a75f2c"
+path = "~/engram-eval/proxies/android-gpuimage-plus"
+namespace = "repo:gpuimage-plus"
+role = "app<->C++ JNI image pipeline — Java/Kotlin + C++ + GLSL filters, CameraX"
