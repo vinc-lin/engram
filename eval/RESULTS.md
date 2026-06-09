@@ -95,3 +95,23 @@ The bulk re-index took ~22 min and 78 non-source files timed out (transport erro
 recovered immediately after (mxbai embed 200 in 0.28s). Confirms the embed backend is a throughput
 bottleneck under bulk load → Phase R (resilience/fallback) + engram-index POST-timeout/concurrency
 tuning.
+
+## Phase F4 — path-type ranking prior (read-path A/B) — 2026-06-09 — **Phase F PASSES**
+
+Same index as F3 (no re-index); only `search_code` ranking changed (`ENGRAM_CODE_PATH_PRIOR` on).
+
+| Metric | F3 (prior off) | F4 (prior on) | Bar |
+|--------|------|------|-----|
+| ingest | 0.976 | **0.998** (533/534) | ≥ 0.99 — **PASS** |
+| recall@1 | 0.314 | **0.486** | — |
+| recall@5 | 0.686 | **0.800** | ≥ 0.80 — **PASS** |
+| recall@10 | 0.800 | **0.829** | — |
+| line-recall@10 | 0.629 | **0.714** | — |
+| hard-neg FPs | 3/5 | **1/5** | — |
+
+**Both Phase F bars met.** The prior (docs 0.5 / tests 0.6 / config 0.7 / source 1.0) eliminated the
+doc/test distractors — every remaining miss's top-1 is now a SOURCE file. Remaining misses are
+genuine source-vs-source semantic near-misses: `types.ts` enum buried; `compress`↔`summarize`;
+`keyed-mutex`↔`access-tracker`; `dedup`↔`smart-search`; `stemmer`↔`query-expansion`;
+`schema`↔`tools-registry`. Closing those needs a graph/`sym:` ranking signal or better embeddings
+(deferred enhancements). Hard-negative false positives fell 3/5 → 1/5.

@@ -17,8 +17,8 @@ _Last updated: 2026-06-09. Published at `github.com/vinc-lin/engram` (origin/mai
 | B — Throughput | batch embeddings | ✅ |
 | 1b — `engram-index` CLI | index / reindex / hook (write side) | ✅ |
 | 1c — `engram-mcp` server | `search_code` MCP tool (read side) | ✅ |
-| E — Validation gate | ingest-rate + recall@10 on agentmemory (unblocked; **no number measured yet**) | 🔄 🚦 |
-| F — Retrieval quality | tighten metric + fix chunking granularity + coverage (the real recall lever) | ◻️ next |
+| E — Validation gate | first real baseline measured + harness tightened (recall@1/5/10, line-hits) | ✅ |
+| F — Retrieval quality | symbol-split chunking + path prior → **recall@5 0.80 / ingest 0.998 PASS** | ✅ |
 | R — Reliability | embedder fallback; gate off code consolidation (trees no tool reads) | ◻️ |
 | 2 — Architecture digests | `get_architecture` / `get_module` | ◻️ |
 | 3a — History / rationale | `why` / `find_symbol` | ◻️ |
