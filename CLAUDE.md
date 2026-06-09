@@ -199,7 +199,8 @@ cold pipeline deterministically with `while worker_tick(...) {}`.
   code-KB / fallback ones (defaults in parens): `ENGRAM_EMBED_MODEL` (`mxbai-embed-large`),
   `ENGRAM_EMBED_DIM` (1024), `ENGRAM_EMBED_TIMEOUT_SECS` (30), `ENGRAM_EMBED_FALLBACK` (false),
   `ENGRAM_CONSOLIDATE_CODE` (false), `ENGRAM_CODE_SYMBOL_SPLIT` (true), `ENGRAM_CODE_PATH_PRIOR`
-  (true), `ENGRAM_CODE_TREE_SITTER` (true), `ENGRAM_MCP_HTTP` (unset). Plus the gateway/LLM ones:
+  (true), `ENGRAM_CODE_TREE_SITTER` (true), `ENGRAM_MCP_HTTP` (unset), `ENGRAM_INDEX_TIMEOUT_SECS`
+  (120, read by `engram-index`, not the core `Config`). Plus the gateway/LLM ones:
   `ENGRAM_GATEWAY_URL`, `ENGRAM_GATEWAY_KEY`, `ENGRAM_LLM_MODEL`, `ENGRAM_LLM_PROVIDER`.
 - **SQLite must live on native ext4, not the v9fs repo mount.** This repo lives on a Windows
   v9fs mount where WAL is flaky and `chmod` doesn't stick. Deploy keeps the DB, vault, logs, and

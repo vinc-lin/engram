@@ -69,7 +69,7 @@ pub fn post_doc_with_meta(
             .post(&url)
             .bearer_auth(token)
             .json(&body)
-            .timeout(Duration::from_secs(30))
+            .timeout(request_timeout())
             .send()
             .map_err(|e| RetryableError::Transport(e.to_string()))?;
 
@@ -98,7 +98,7 @@ pub fn delete_doc(
         let resp = client
             .delete(&url)
             .bearer_auth(token)
-            .timeout(Duration::from_secs(30))
+            .timeout(request_timeout())
             .send()
             .map_err(|e| RetryableError::Transport(e.to_string()))?;
 
@@ -111,6 +111,27 @@ pub fn delete_doc(
             Err(RetryableError::Client(status.as_u16()))
         }
     })
+}
+
+// ── request timeout ─────────────────────────────────────────────────────────────
+
+/// Per-request HTTP timeout for indexer POST/DELETE calls. A large file embeds many chunks
+/// synchronously on the server, so the default is generous (120s); override with
+/// `ENGRAM_INDEX_TIMEOUT_SECS`. The server commits the ingest atomically even if the client
+/// gives up waiting, so too-low a value produces misleading FAILs and redundant retries.
+fn request_timeout() -> Duration {
+    use std::sync::OnceLock;
+    static CACHE: OnceLock<u64> = OnceLock::new();
+    let secs =
+        *CACHE.get_or_init(|| parse_timeout_secs(std::env::var("ENGRAM_INDEX_TIMEOUT_SECS").ok()));
+    Duration::from_secs(secs)
+}
+
+/// Parse `ENGRAM_INDEX_TIMEOUT_SECS`: a positive integer in seconds; missing/unparseable/zero → 120.
+fn parse_timeout_secs(v: Option<String>) -> u64 {
+    v.and_then(|s| s.trim().parse::<u64>().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(120)
 }
 
 // ── retry internals ───────────────────────────────────────────────────────────
@@ -189,5 +210,19 @@ mod tests {
         let url1 = build_by_key_url("http://host/", "repo:x", "f.rs");
         let url2 = build_by_key_url("http://host", "repo:x", "f.rs");
         assert_eq!(url1, url2);
+    }
+
+    #[test]
+    fn timeout_defaults_to_120_when_unset_or_bad() {
+        assert_eq!(parse_timeout_secs(None), 120);
+        assert_eq!(parse_timeout_secs(Some("abc".into())), 120);
+        assert_eq!(parse_timeout_secs(Some("0".into())), 120);
+        assert_eq!(parse_timeout_secs(Some("".into())), 120);
+    }
+
+    #[test]
+    fn timeout_reads_positive_override() {
+        assert_eq!(parse_timeout_secs(Some("300".into())), 300);
+        assert_eq!(parse_timeout_secs(Some("  90 ".into())), 90);
     }
 }

@@ -159,6 +159,7 @@ parsing is permissive — an unparseable value silently falls back to its defaul
 | `ENGRAM_CODE_PATH_PRIOR` | `true`                 | path-type ranking prior in `search_code` |
 | `ENGRAM_CODE_TREE_SITTER` | `true`                | tree-sitter chunking (off → heuristic chunker) |
 | `ENGRAM_MCP_HTTP`       | (unset)                 | if set, `engram-mcp` serves HTTP JSON-RPC |
+| `ENGRAM_INDEX_TIMEOUT_SECS` | `120`               | `engram-index` per-request POST/DELETE timeout (raise for large files) |
 
 ## Validation
 
