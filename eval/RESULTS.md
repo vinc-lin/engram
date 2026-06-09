@@ -115,3 +115,30 @@ genuine source-vs-source semantic near-misses: `types.ts` enum buried; `compress
 `keyed-mutex`↔`access-tracker`; `dedup`↔`smart-search`; `stemmer`↔`query-expansion`;
 `schema`↔`tools-registry`. Closing those needs a graph/`sym:` ranking signal or better embeddings
 (deferred enhancements). Hard-negative false positives fell 3/5 → 1/5.
+
+## Phase 4 — tree-sitter chunking (live capstone) — 2026-06-09
+
+Re-indexed agentmemory on the tree-sitter binary (`ENGRAM_CODE_TREE_SITTER=true`, embedder fallback
+on, consolidation off). Measured on the 35-query gold set.
+
+| Metric | F4 (heuristic chunking) | Phase 4 (tree-sitter) | Δ |
+|--------|------|------|---|
+| ingest | 0.998 | 0.998 | — |
+| recall@1 | 0.486 | **0.543** | **+0.057** |
+| recall@5 | 0.800 | 0.771 | −0.029 |
+| recall@10 | 0.829 | **0.914** | **+0.085** |
+| line-recall@10 | 0.714 | **0.771** | **+0.057** |
+
+Tree-sitter isolates each definition into its own chunk, which sharpens **precision** (recall@1
++0.057 — the best match ranks first more often), **coverage** (recall@10 0.829→0.914 = 32/35 gold
+files in top-10), and **line accuracy** (line-recall@10 +0.057 — the matched chunk's span contains
+the answer more often). recall@5 dips marginally (−0.029, ~one query slipping rank 5→6): finer
+granularity means one file can occupy several top-5 *chunk* slots, scattering distinct files
+deeper. **Lever:** dedup `search_code` results to best-chunk-per-file (or dedup paths in the metric)
+— would likely lift recall@5 back over 0.80 while keeping the @1/@10/line gains.
+
+Ops: the re-index took ~21 min and 70 large multilingual `READMEs/*.md`/`CHANGELOG` timed out
+(engram-index *client*-side POST timeout — tree-sitter's higher chunk count makes big CJK docs
+slower to ingest synchronously; the embedder fallback only catches gateway-side embed errors, not a
+client timeout). All gold (source) files re-chunked fine; ingest 0.998 holds (upsert kept prior
+`.md` versions). Lever: raise the engram-index POST timeout / cap per-file chunk concurrency.
