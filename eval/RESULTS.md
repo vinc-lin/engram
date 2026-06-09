@@ -143,6 +143,12 @@ including the one whose span covers the answer). Net-negative; reverted. The rec
 small ranking effect of finer chunking — net of tree-sitter is still a clear precision / coverage /
 line-accuracy win.
 
+**Decision (2026-06-09): tree-sitter kept as the production config** (`ENGRAM_CODE_TREE_SITTER`
+defaults on; live on the deploy). The agent-facing metrics — rank-1 precision, top-10 coverage, and
+line accuracy — all improve; the recall@5 −0.029 is an accepted trade. The genuine lever for
+recall@5 (a graph/`sym:` ranking signal or better embeddings) is filed under deferred enhancements,
+not chunking tricks.
+
 Ops: the re-index took ~21 min and 70 large multilingual `READMEs/*.md`/`CHANGELOG` timed out
 (engram-index *client*-side POST timeout — tree-sitter's higher chunk count makes big CJK docs
 slower to ingest synchronously; the embedder fallback only catches gateway-side embed errors, not a
