@@ -23,6 +23,11 @@ pub struct Config {
     pub stale_sweep_secs: u64,
     pub max_summary_output_tokens: usize,
     pub vault_dir: Option<String>,
+    /// Wrap the gateway embedder with a local Ollama fallback (R1). Default false.
+    pub embed_fallback: bool,
+    /// Run cold-path consolidation for code-mode docs (R2). Default false — code trees are unread
+    /// (search_code reads chunks) until Phase 2 ships get_architecture/get_module.
+    pub consolidate_code: bool,
 }
 
 impl Config {
@@ -77,8 +82,20 @@ impl Config {
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(5000),
             vault_dir: get("ENGRAM_VAULT_DIR"),
+            embed_fallback: env_bool(get("ENGRAM_EMBED_FALLBACK"), false),
+            consolidate_code: env_bool(get("ENGRAM_CONSOLIDATE_CODE"), false),
         }
     }
+}
+
+/// Parse a boolean env value (true/1/yes/on vs false/0/no/off); unrecognized/absent → `default`.
+fn env_bool(v: Option<String>, default: bool) -> bool {
+    v.and_then(|s| match s.to_ascii_lowercase().as_str() {
+        "true" | "1" | "yes" | "on" => Some(true),
+        "false" | "0" | "no" | "off" => Some(false),
+        _ => None,
+    })
+    .unwrap_or(default)
 }
 
 /// Whether code chunking flushes at definition boundaries (Phase F symbol-split). Process-global
@@ -158,15 +175,19 @@ mod tests {
         assert_eq!(c.seal_flush_age_secs, 604_800.0);
         assert!(c.gateway_key.is_empty());
         assert!(c.vault_dir.is_none());
+        assert!(!c.embed_fallback);
+        assert!(!c.consolidate_code);
 
         let c2 = Config::from_vars(|k| match k {
             "ENGRAM_LLM_MODEL" => Some("deepseek-chat".into()),
             "ENGRAM_SEAL_FANOUT" => Some("3".into()),
             "ENGRAM_VAULT_DIR" => Some("/tmp/v".into()),
+            "ENGRAM_CONSOLIDATE_CODE" => Some("true".into()),
             _ => None,
         });
         assert_eq!(c2.llm_model, "deepseek-chat");
         assert_eq!(c2.seal_fanout, 3);
         assert_eq!(c2.vault_dir.as_deref(), Some("/tmp/v"));
+        assert!(c2.consolidate_code);
     }
 }

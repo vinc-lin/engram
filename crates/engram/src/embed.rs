@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::error::{Error, Result};
@@ -281,6 +282,49 @@ impl Embedder for GatewayEmbedder {
     }
 }
 
+/// Wraps a primary embedder with a fallback used only when the primary errors (e.g. the gateway
+/// is unreachable). `signature()` and `dim()` delegate to the PRIMARY, so failover vectors are
+/// stored and read under one stable signature — a failover never orphans existing chunks. The
+/// fallback should serve the same model/dim as the primary (e.g. a local Ollama mirroring the
+/// gateway's embed model).
+pub struct FallbackEmbedder {
+    primary: Arc<dyn Embedder>,
+    fallback: Arc<dyn Embedder>,
+}
+
+impl FallbackEmbedder {
+    pub fn new(primary: Arc<dyn Embedder>, fallback: Arc<dyn Embedder>) -> Self {
+        Self { primary, fallback }
+    }
+}
+
+impl Embedder for FallbackEmbedder {
+    fn embed(&self, text: &str) -> Result<Vec<f32>> {
+        match self.primary.embed(text) {
+            Ok(v) => Ok(v),
+            Err(e) => {
+                tracing::warn!("primary embedder failed ({e}); falling back");
+                self.fallback.embed(text)
+            }
+        }
+    }
+    fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
+        match self.primary.embed_batch(texts) {
+            Ok(v) => Ok(v),
+            Err(e) => {
+                tracing::warn!("primary embedder batch failed ({e}); falling back");
+                self.fallback.embed_batch(texts)
+            }
+        }
+    }
+    fn signature(&self) -> String {
+        self.primary.signature()
+    }
+    fn dim(&self) -> usize {
+        self.primary.dim()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::cell::Cell;
@@ -367,6 +411,46 @@ mod tests {
         assert_eq!(batch.len(), 2);
         assert_eq!(batch[0], single_a);
         assert_eq!(batch[1], single_b);
+    }
+
+    struct AlwaysErr;
+    impl Embedder for AlwaysErr {
+        fn embed(&self, _t: &str) -> Result<Vec<f32>> {
+            Err(Error::Embed("primary down".into()))
+        }
+        fn embed_batch(&self, _t: &[&str]) -> Result<Vec<Vec<f32>>> {
+            Err(Error::Embed("primary down".into()))
+        }
+        fn signature(&self) -> String {
+            "primary:err".into()
+        }
+        fn dim(&self) -> usize {
+            7
+        }
+    }
+
+    #[test]
+    fn fallback_used_when_primary_errors_signature_from_primary() {
+        let fe = FallbackEmbedder::new(Arc::new(AlwaysErr), Arc::new(HashEmbedder::new(8)));
+        // Primary errors → the fallback's vector is returned.
+        assert_eq!(
+            fe.embed("hello world").unwrap(),
+            HashEmbedder::new(8).embed("hello world").unwrap()
+        );
+        assert_eq!(fe.embed_batch(&["a", "b"]).unwrap().len(), 2);
+        // signature() + dim() delegate to PRIMARY so a failover never orphans reads.
+        assert_eq!(fe.signature(), "primary:err");
+        assert_eq!(fe.dim(), 7);
+    }
+
+    #[test]
+    fn fallback_not_consulted_when_primary_ok() {
+        // Primary OK → returns the primary's vector (its dim 4); fallback (dim 99) never used.
+        let fe = FallbackEmbedder::new(
+            Arc::new(HashEmbedder::new(4)),
+            Arc::new(HashEmbedder::new(99)),
+        );
+        assert_eq!(fe.embed("x").unwrap().len(), 4);
     }
 
     #[test]

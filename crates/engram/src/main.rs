@@ -1,5 +1,6 @@
 use engram::api::{app, AppState};
 use engram::config::Config;
+use engram::embed::Embedder;
 use engram::jobs::spawn_workers;
 use engram::llm::{GatewayChatClient, HttpAuditSink};
 use engram::store::Store;
@@ -14,16 +15,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let store = Store::open(&cfg.db_path)?;
     store.requeue_running()?; // crash recovery
 
-    // Embeddings route through the litellm gateway (same as summaries): centralized
-    // keys/egress, audited, and reachable from WSL. (OllamaEmbedder remains in
-    // `embed` for direct same-host use / fallback.)
-    let embedder = Arc::new(engram::embed::GatewayEmbedder::new(
+    // Embeddings route through the litellm gateway (centralized keys/egress, audited, reachable
+    // from WSL). With ENGRAM_EMBED_FALLBACK, wrap it with a local Ollama fallback (R1): the
+    // fallback serves the same model/dim and the wrapper keeps the primary's signature(), so a
+    // failover never orphans chunks.
+    let primary: Arc<dyn Embedder> = Arc::new(engram::embed::GatewayEmbedder::new(
         cfg.gateway_url.clone(),
         cfg.gateway_key.clone(),
         cfg.embed_model.clone(),
         cfg.embed_dim,
         cfg.embed_timeout_secs,
     ));
+    let embedder: Arc<dyn Embedder> = if cfg.embed_fallback {
+        tracing::info!(
+            "embedder: gateway primary + ollama fallback ({})",
+            cfg.ollama_url
+        );
+        Arc::new(engram::embed::FallbackEmbedder::new(
+            primary,
+            Arc::new(engram::embed::OllamaEmbedder::new(
+                cfg.ollama_url.clone(),
+                cfg.embed_model.clone(),
+                cfg.embed_dim,
+            )),
+        ))
+    } else {
+        primary
+    };
+    // Best-effort startup reachability probe (non-fatal): surface a dead embed backend early.
+    match embedder.embed("ping") {
+        Ok(_) => tracing::info!("embedder reachable ({})", embedder.signature()),
+        Err(e) => tracing::warn!("embedder probe failed at startup: {e}"),
+    }
 
     let processor = Arc::new(TreeProcessor {
         embedder: embedder.clone(),

@@ -29,6 +29,14 @@ start_engram() {
 }
 
 start_tunnel() {
+  if [ -z "${ENGRAM_TUNNEL_HOST:-}" ]; then
+    echo "tunnel: disabled (set ENGRAM_TUNNEL_HOST + ENGRAM_TUNNEL_KEY in $ENV_FILE to enable)"
+    return
+  fi
+  if [ ! -f "$G3G_KEY" ]; then
+    echo "tunnel: key $G3G_KEY not found — skipping (set ENGRAM_TUNNEL_KEY)"
+    return
+  fi
   if up engram-tunnel; then echo "tunnel: already up"; return; fi
   mkdir -p "$LOG_DIR"
   screen -dmS engram-tunnel bash -c "while true; do ssh -N -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes -o ConnectTimeout=10 -i '$G3G_KEY' -R 127.0.0.1:$PORT:127.0.0.1:$PORT '$G3G' >> '$TUNNEL_LOG' 2>&1; echo \"[\$(date -Is)] tunnel dropped — reconnect in 3s\" >> '$TUNNEL_LOG'; sleep 3; done"

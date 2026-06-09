@@ -217,6 +217,17 @@ fn label_for(tree_kind: &str, buf: &[TreeNode], summary: &str) -> Option<String>
 /// doc's prior unsealed leaves (sealed history is immutable). Optionally mirrors the doc.
 pub fn process_doc(store: &Store, ctx: &TreeCtx, namespace: &str, document_id: &str) -> Result<()> {
     let doc = store.get_doc(namespace, document_id)?;
+    // R2: skip cold-path consolidation for code-mode docs unless enabled — search_code reads
+    // chunks directly, so code trees are unread until Phase 2 ships get_architecture/get_module.
+    let is_code = doc
+        .as_ref()
+        .and_then(|d| d.meta.as_ref())
+        .and_then(|m| m.get("kind"))
+        .and_then(|k| k.as_str())
+        == Some("file");
+    if is_code && !ctx.cfg.consolidate_code {
+        return Ok(());
+    }
     let author = doc
         .as_ref()
         .map(|d| d.author.clone())
@@ -482,6 +493,62 @@ mod tests {
                 .unwrap()
                 .len(),
             1
+        );
+    }
+
+    #[test]
+    fn consolidate_code_gate_skips_code_docs_by_default() {
+        let (store, _d) = temp();
+        let e = HashEmbedder::new(16);
+        let new = crate::model::NewDoc {
+            key: "src/x.rs".into(),
+            title: "src/x.rs".into(),
+            content: "fn alpha() {}\nfn beta() {}".into(),
+            author: "code".into(),
+            taint: crate::model::Taint::Internal,
+            meta: Some(serde_json::json!({"kind": "file"})),
+        };
+        crate::ingest::ingest_document(&store, &e, "repo:x", &new).unwrap();
+        let job = store.claim_job().unwrap().unwrap();
+        let chat = FakeChatClient::ok("S");
+        let audit = NullAuditSink;
+
+        // Default consolidate_code = false → the code doc is skipped (no global leaves).
+        let cfg_off = Config::from_vars(|_| None);
+        let ctx_off = TreeCtx {
+            embedder: &e,
+            chat: &chat,
+            audit: &audit,
+            cfg: &cfg_off,
+            vault: None,
+        };
+        process_doc(&store, &ctx_off, &job.namespace, &job.document_id).unwrap();
+        assert_eq!(
+            store
+                .unsealed_nodes("repo:x", "global", "global", 0)
+                .unwrap()
+                .len(),
+            0,
+            "code consolidation must be gated off by default"
+        );
+
+        // consolidate_code = true → leaves are created.
+        let mut cfg_on = Config::from_vars(|_| None);
+        cfg_on.consolidate_code = true;
+        let ctx_on = TreeCtx {
+            embedder: &e,
+            chat: &chat,
+            audit: &audit,
+            cfg: &cfg_on,
+            vault: None,
+        };
+        process_doc(&store, &ctx_on, &job.namespace, &job.document_id).unwrap();
+        assert!(
+            !store
+                .unsealed_nodes("repo:x", "global", "global", 0)
+                .unwrap()
+                .is_empty(),
+            "code consolidation should run when enabled"
         );
     }
 
