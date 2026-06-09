@@ -36,6 +36,8 @@ pub fn app(state: AppState) -> Router {
         .route("/v1/:namespace/code/search", post(search_code_docs))
         .route("/v1/:namespace/recall", get(recall_docs))
         .route("/v1/:namespace/tree", post(tree_query))
+        .route("/v1/:namespace/code/architecture", post(get_architecture))
+        .route("/v1/:namespace/code/module", post(get_module))
         .route_layer(middleware::from_fn_with_state(state.clone(), auth));
 
     Router::new()
@@ -219,6 +221,74 @@ async fn tree_query(
     }
 }
 
+#[derive(Deserialize)]
+struct ArchReq {
+    query: Option<String>,
+    depth: Option<usize>,
+    limit: Option<usize>,
+}
+
+/// Phase 2: the repo architecture digest — the top of the `global` summary tree. A query is
+/// optional; without one it returns the top digests in tree order (no embed/gateway round-trip).
+async fn get_architecture(
+    State(state): State<AppState>,
+    Path(namespace): Path<String>,
+    Json(req): Json<ArchReq>,
+) -> Response {
+    let result = tokio::task::spawn_blocking(move || {
+        retrieve::drill_down(
+            &state.store,
+            state.embedder.as_ref(),
+            &namespace,
+            req.query.as_deref().unwrap_or(""),
+            Some("global"),
+            Some("global"),
+            req.depth.unwrap_or(3),
+            req.limit.unwrap_or(10),
+        )
+    })
+    .await;
+    match result {
+        Ok(Ok(hits)) => Json(hits).into_response(),
+        Ok(Err(e)) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct ModuleReq {
+    path: String,
+    query: Option<String>,
+    depth: Option<usize>,
+    limit: Option<usize>,
+}
+
+/// Phase 2: one directory's digest — `path` is the module key (a repo-relative directory).
+async fn get_module(
+    State(state): State<AppState>,
+    Path(namespace): Path<String>,
+    Json(req): Json<ModuleReq>,
+) -> Response {
+    let result = tokio::task::spawn_blocking(move || {
+        retrieve::drill_down(
+            &state.store,
+            state.embedder.as_ref(),
+            &namespace,
+            req.query.as_deref().unwrap_or(""),
+            Some("module"),
+            Some(&req.path),
+            req.depth.unwrap_or(3),
+            req.limit.unwrap_or(10),
+        )
+    })
+    .await;
+    match result {
+        Ok(Ok(hits)) => Json(hits).into_response(),
+        Ok(Err(e)) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -286,6 +356,71 @@ mod tests {
         let hits: Vec<serde_json::Value> = resp.json().await.unwrap();
         assert!(!hits.is_empty());
         assert!(hits[0]["body"].as_str().unwrap().contains("rust"));
+    }
+
+    #[tokio::test]
+    async fn architecture_and_module_endpoints_return_digests() {
+        let (base, store, embedder, _d) = spawn_full().await;
+        for (k, c) in [
+            (
+                "src/state/search.rs",
+                "fn bm25_score() {}\nfn idf_term() {}",
+            ),
+            (
+                "src/state/vector.rs",
+                "fn cosine_sim() {}\nfn dot_prod() {}",
+            ),
+        ] {
+            let new = crate::model::NewDoc {
+                key: k.into(),
+                title: k.into(),
+                content: c.into(),
+                author: "code".into(),
+                taint: crate::model::Taint::Internal,
+                meta: Some(serde_json::json!({ "kind": "file" })),
+            };
+            crate::ingest::ingest_document(&store, embedder.as_ref(), "repo:demo", &new).unwrap();
+        }
+        // Build the code trees (consolidation gated on for code).
+        let mut cfg = crate::config::Config::from_vars(|_| None);
+        cfg.consolidate_code = true;
+        let proc = crate::tree::TreeProcessor {
+            embedder: embedder.clone(),
+            chat: std::sync::Arc::new(crate::llm::FakeChatClient::ok("S")),
+            audit: std::sync::Arc::new(crate::llm::NullAuditSink),
+            cfg,
+            vault: None,
+        };
+        while crate::jobs::worker_tick(&store, &proc, 5).unwrap() {}
+
+        let client = reqwest::Client::new();
+        // get_architecture (no query) → the global digest.
+        let resp = client
+            .post(format!("{base}/v1/repo:demo/code/architecture"))
+            .bearer_auth("secret")
+            .json(&serde_json::json!({}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+        let arch: Vec<serde_json::Value> = resp.json().await.unwrap();
+        assert!(!arch.is_empty(), "architecture digest should be non-empty");
+
+        // get_module for the src/state directory.
+        let resp = client
+            .post(format!("{base}/v1/repo:demo/code/module"))
+            .bearer_auth("secret")
+            .json(&serde_json::json!({ "path": "src/state" }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+        let m: Vec<serde_json::Value> = resp.json().await.unwrap();
+        assert!(
+            !m.is_empty(),
+            "module digest for src/state should be non-empty"
+        );
+        assert!(m.iter().all(|h| h["tree_kind"] == "module"));
     }
 
     #[tokio::test]

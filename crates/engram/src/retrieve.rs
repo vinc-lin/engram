@@ -55,7 +55,13 @@ pub fn drill_down(
     max_depth: usize,
     limit: usize,
 ) -> Result<Vec<TreeHit>> {
-    let qv = embedder.embed(query_text)?;
+    // A query-less drill (empty query) returns the top digests in tree order without reranking —
+    // and without an embed call (so get_architecture/get_module need no gateway round-trip).
+    let qv = if query_text.trim().is_empty() {
+        None
+    } else {
+        Some(embedder.embed(query_text)?)
+    };
     let kind = tree_kind.unwrap_or("global");
     let key = tree_key.unwrap_or("global");
 
@@ -106,7 +112,10 @@ pub fn drill_down(
         .enumerate()
         .filter(|(i, _)| keep[*i])
         .map(|(_, n)| {
-            let score = cosine(&qv, &n.embedding);
+            let score = match &qv {
+                Some(q) => cosine(q, &n.embedding),
+                None => 0.0,
+            };
             TreeHit {
                 node_id: n.node_id,
                 tree_kind: n.tree_kind,
