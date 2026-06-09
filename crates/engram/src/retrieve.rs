@@ -213,6 +213,41 @@ pub fn query(
     Ok(hits)
 }
 
+/// Ranking prior for code search: down-weight chunks from files that are usually *not* the
+/// implementation an agent wants (docs/markdown, tests, config/data/examples/benchmarks), so
+/// source files rank above them on near-ties. Plain source code stays at 1.0. Phase F.
+fn path_prior(path: &str) -> f64 {
+    let p = path.to_ascii_lowercase();
+    let base = p.rsplit('/').next().unwrap_or(p.as_str());
+    let ext = base.rsplit('.').next().unwrap_or("");
+    if matches!(ext, "md" | "mdx" | "markdown" | "rst" | "txt") {
+        return 0.5; // documentation / prose
+    }
+    if p.contains(".test.")
+        || p.contains(".spec.")
+        || p.contains("_test.")
+        || p.split('/')
+            .any(|s| matches!(s, "test" | "tests" | "__tests__" | "spec" | "specs"))
+    {
+        return 0.6; // tests
+    }
+    if base.starts_with(".env")
+        || matches!(
+            ext,
+            "json" | "yaml" | "yml" | "toml" | "lock" | "ini" | "cfg"
+        )
+        || p.split('/').any(|s| {
+            matches!(
+                s,
+                "examples" | "example" | "fixtures" | "testdata" | "benchmark" | "benchmarks"
+            )
+        })
+    {
+        return 0.7; // config / data / examples / benchmarks
+    }
+    1.0
+}
+
 /// Chunk-level code search: rank individual code chunks by vector cosine + keyword overlap,
 /// returning the matching chunk's `path:line` and snippet (not whole documents). The doc-level
 /// `query` is for prose; this is the code path used by the MCP `search_code` tool.
@@ -227,12 +262,14 @@ pub fn search_code(
     let sig = embedder.signature();
     let candidates = store.code_chunks_for_namespace(namespace, &sig)?;
 
+    let use_prior = crate::config::code_path_prior();
     let mut hits: Vec<CodeHit> = candidates
         .into_iter()
         .map(|c| {
             let v = cosine(&qv, &c.embedding);
             let k = keyword_overlap(query_text, &c.text);
-            let score = VEC_W_FALLBACK * v + KW_W_FALLBACK * k;
+            let prior = if use_prior { path_prior(&c.key) } else { 1.0 };
+            let score = (VEC_W_FALLBACK * v + KW_W_FALLBACK * k) * prior;
             CodeHit {
                 path: c.key,
                 document_id: c.document_id,
@@ -493,6 +530,56 @@ mod tests {
         assert!(hits[0].snippet.contains("login"));
         assert_eq!(hits[0].line_start, Some(1));
         assert!(hits[0].score >= hits.last().unwrap().score);
+    }
+
+    #[test]
+    fn path_prior_classifies_paths() {
+        assert_eq!(super::path_prior("src/foo.rs"), 1.0);
+        assert_eq!(super::path_prior("crates/engram/src/main.rs"), 1.0);
+        assert!(super::path_prior("README.md") < 1.0);
+        assert!(super::path_prior("docs/guide.md") < 1.0);
+        assert!(super::path_prior("test/foo.test.ts") < 1.0);
+        assert!(super::path_prior("src/foo.test.ts") < 1.0);
+        assert!(super::path_prior(".env.example") < 1.0);
+        assert!(super::path_prior("examples/demo.ts") < 1.0);
+    }
+
+    #[test]
+    fn search_code_down_weights_docs_below_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(dir.path().join("t.db").to_str().unwrap()).unwrap();
+        let e = HashEmbedder::new(64);
+        let mk = |k: &str, c: &str| crate::model::NewDoc {
+            key: k.into(),
+            title: k.into(),
+            content: c.into(),
+            author: "code".into(),
+            taint: crate::model::Taint::Internal,
+            meta: Some(serde_json::json!({"kind": "file"})),
+        };
+        // Identical content in a doc and a source file: equal base score, so the prior decides.
+        let body = "alpha beta gamma delta epsilon";
+        crate::ingest::ingest_document(&store, &e, "repo:x", &mk("docs/thing.md", body)).unwrap();
+        crate::ingest::ingest_document(&store, &e, "repo:x", &mk("src/thing.rs", body)).unwrap();
+        let hits = search_code(&store, &e, "repo:x", body, 10).unwrap();
+        assert_eq!(
+            hits[0].path, "src/thing.rs",
+            "source should outrank identical-content .md"
+        );
+        let src = hits
+            .iter()
+            .find(|h| h.path == "src/thing.rs")
+            .unwrap()
+            .score;
+        let md = hits
+            .iter()
+            .find(|h| h.path == "docs/thing.md")
+            .unwrap()
+            .score;
+        assert!(
+            md < src,
+            "doc score {md} should be below source score {src}"
+        );
     }
 
     #[test]

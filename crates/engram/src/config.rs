@@ -99,6 +99,23 @@ pub fn code_symbol_split() -> bool {
     })
 }
 
+/// Whether code search applies the path-type ranking prior (Phase F: down-weight docs/tests/config
+/// so source files rank above them on near-ties). Cached read of `ENGRAM_CODE_PATH_PRIOR` (default true).
+pub fn code_path_prior() -> bool {
+    use std::sync::OnceLock;
+    static CACHE: OnceLock<bool> = OnceLock::new();
+    *CACHE.get_or_init(|| {
+        std::env::var("ENGRAM_CODE_PATH_PRIOR")
+            .ok()
+            .and_then(|s| match s.to_ascii_lowercase().as_str() {
+                "true" | "1" | "yes" | "on" => Some(true),
+                "false" | "0" | "no" | "off" => Some(false),
+                _ => None,
+            })
+            .unwrap_or(true)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
