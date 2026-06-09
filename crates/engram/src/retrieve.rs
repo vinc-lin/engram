@@ -296,6 +296,12 @@ pub fn search_code(
             .partial_cmp(&a.score)
             .unwrap_or(std::cmp::Ordering::Equal)
     });
+    // Abstention floor (Phase 8): drop low-confidence hits so an absent-topic query returns nothing
+    // instead of a confident-but-wrong top hit. Off by default (ENGRAM_CODE_MIN_SCORE=0).
+    let min_score = crate::config::code_min_score();
+    if min_score > 0.0 {
+        hits.retain(|h| h.score >= min_score);
+    }
     hits.truncate(limit);
     Ok(hits)
 }

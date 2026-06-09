@@ -150,6 +150,20 @@ pub fn code_tree_sitter() -> bool {
     })
 }
 
+/// Minimum blended score for a `search_code` hit to be returned (abstention floor). Cached read of
+/// `ENGRAM_CODE_MIN_SCORE` (default 0.0 = off). Drops confident-but-wrong hits on absent topics.
+pub fn code_min_score() -> f64 {
+    use std::sync::OnceLock;
+    static CACHE: OnceLock<f64> = OnceLock::new();
+    *CACHE.get_or_init(|| {
+        std::env::var("ENGRAM_CODE_MIN_SCORE")
+            .ok()
+            .and_then(|s| s.parse::<f64>().ok())
+            .filter(|v| v.is_finite() && *v >= 0.0)
+            .unwrap_or(0.0)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -126,6 +126,66 @@ fn is_chunkable(lang: Lang, kind: &str) -> bool {
     }
 }
 
+/// Whether a top-level node starts a chunk. For C/C++ this also unwraps a `declaration` /
+/// `type_definition` / `linkage_specification` that *defines* a struct/union/enum/class (it has a
+/// body) — those wrap the specifier, so the flat `is_chunkable` check alone misses them.
+fn is_boundary(lang: Lang, node: &tree_sitter::Node) -> bool {
+    if is_chunkable(lang, node.kind()) {
+        return true;
+    }
+    if matches!(lang, Lang::C | Lang::Cpp)
+        && matches!(
+            node.kind(),
+            "declaration" | "type_definition" | "linkage_specification"
+        )
+    {
+        let mut cur = node.walk();
+        return node.named_children(&mut cur).any(|ch| {
+            matches!(
+                ch.kind(),
+                "struct_specifier" | "union_specifier" | "enum_specifier" | "class_specifier"
+            ) && ch.child_by_field_name("body").is_some()
+        });
+    }
+    false
+}
+
+/// The defining identifier for a chunkable node. Uses the `name` field when present; for C/C++
+/// `function_definition` (whose name lives under `declarator`) it follows the declarator chain.
+fn symbol_name(lang: Lang, node: &tree_sitter::Node, src: &[u8]) -> Option<String> {
+    if let Some(name) = node.child_by_field_name("name") {
+        return name
+            .utf8_text(src)
+            .ok()
+            .filter(|t| !t.is_empty())
+            .map(str::to_string);
+    }
+    if matches!(lang, Lang::C | Lang::Cpp) && node.kind() == "function_definition" {
+        if let Some(decl) = node.child_by_field_name("declarator") {
+            return declarator_name(decl, src);
+        }
+    }
+    None
+}
+
+/// Follow a C/C++ declarator chain (`function_declarator` -> `pointer_declarator` -> ...) down to
+/// the function-name identifier.
+fn declarator_name(mut node: tree_sitter::Node, src: &[u8]) -> Option<String> {
+    loop {
+        if matches!(
+            node.kind(),
+            "identifier" | "field_identifier" | "type_identifier" | "qualified_identifier"
+        ) {
+            return node
+                .utf8_text(src)
+                .ok()
+                .filter(|t| !t.is_empty())
+                .map(str::to_string);
+        }
+        node = node.child_by_field_name("declarator")?;
+    }
+}
+
 fn parse(lang: Lang, content: &str) -> Option<tree_sitter::Tree> {
     let mut parser = Parser::new();
     parser.set_language(&language(lang)).ok()?;
@@ -149,7 +209,7 @@ pub fn chunk_code_ts(content: &str, lang: Lang) -> Option<Vec<(String, usize, us
     let mut spans: Vec<(usize, usize)> = Vec::new();
     let mut cur = root.walk();
     for child in root.named_children(&mut cur) {
-        if is_chunkable(lang, child.kind()) {
+        if is_boundary(lang, &child) {
             let s = child.start_position().row + 1;
             let e = (child.end_position().row + 1).clamp(s, total);
             spans.push((s, e));
@@ -202,12 +262,8 @@ pub fn extract_symbols_ts(content: &str, lang: Lang) -> Option<Vec<String>> {
     let mut stack = vec![tree.root_node()];
     while let Some(node) = stack.pop() {
         if is_chunkable(lang, node.kind()) {
-            if let Some(name) = node.child_by_field_name("name") {
-                if let Ok(t) = name.utf8_text(src) {
-                    if !t.is_empty() {
-                        syms.push(format!("sym:{t}"));
-                    }
-                }
+            if let Some(t) = symbol_name(lang, &node, src) {
+                syms.push(format!("sym:{t}"));
             }
         }
         let mut cur = node.walk();
@@ -315,8 +371,20 @@ mod tests {
         let src = "#include <stdio.h>\n\nstruct Pixel { int r, g, b; };\n\nint dewarp(int x) {\n    return x * 2;\n}\n";
         let out = chunk_code_ts(src, Lang::C).unwrap();
         let joined: Vec<&str> = out.iter().map(|(t, _, _)| t.as_str()).collect();
-        assert!(joined.iter().any(|t| t.contains("struct Pixel")));
+        // The struct is now its OWN boundary chunk (declaration unwrapped), not lumped with dewarp.
+        assert!(joined
+            .iter()
+            .any(|t| t.contains("struct Pixel") && !t.contains("int dewarp")));
         assert!(joined.iter().any(|t| t.contains("int dewarp")));
+        let syms = extract_symbols_ts(src, Lang::C).unwrap();
+        assert!(
+            syms.contains(&"sym:dewarp".to_string()),
+            "C fn via declarator: {syms:?}"
+        );
+        assert!(
+            syms.contains(&"sym:Pixel".to_string()),
+            "C struct name: {syms:?}"
+        );
     }
 
     #[test]
@@ -327,6 +395,12 @@ mod tests {
         assert!(joined
             .iter()
             .any(|t| t.contains("class Stitcher") || t.contains("namespace avm")));
+        // C++ top-level function name resolved via the declarator chain.
+        let syms = extract_symbols_ts(src, Lang::Cpp).unwrap();
+        assert!(
+            syms.contains(&"sym:run".to_string()),
+            "C++ fn via declarator: {syms:?}"
+        );
     }
 
     #[test]
