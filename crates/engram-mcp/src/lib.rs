@@ -19,12 +19,25 @@ pub struct CodeHit {
     pub score: f64,
 }
 
+/// A consolidated summary-tree node (architecture / module digest).
+#[derive(Debug, Clone)]
+pub struct Digest {
+    pub tree_key: String,
+    pub label: Option<String>,
+    pub body: String,
+    pub score: f64,
+}
+
 // ---------------------------------------------------------------------------
 // Backend trait + real HTTP impl
 // ---------------------------------------------------------------------------
 
 pub trait CodeSearch {
     fn search(&self, query: &str, limit: usize) -> Result<Vec<CodeHit>, String>;
+    /// Repo-wide architecture digest (the `global` summary tree).
+    fn get_architecture(&self, query: &str, limit: usize) -> Result<Vec<Digest>, String>;
+    /// One directory's digest (`path` is a repo-relative directory = the module key).
+    fn get_module(&self, path: &str, query: &str, limit: usize) -> Result<Vec<Digest>, String>;
 }
 
 /// Wire-shape returned by the engram code-search endpoint.
@@ -37,11 +50,52 @@ struct RawHit {
     score: f64,
 }
 
+/// Wire-shape of a tree digest node (extra fields like node_id/level/tree_kind are ignored).
+#[derive(Deserialize)]
+struct RawDigest {
+    tree_key: String,
+    label: Option<String>,
+    body: String,
+    score: f64,
+}
+
 pub struct HttpCodeSearch {
     pub url: String,
     pub token: String,
     pub namespace: String,
     pub client: reqwest::blocking::Client,
+}
+
+impl HttpCodeSearch {
+    /// POST to a digest endpoint (code/architecture or code/module) and parse tree nodes.
+    fn post_digests(&self, suffix: &str, body: Value) -> Result<Vec<Digest>, String> {
+        let endpoint = format!("{}/v1/{}/{}", self.url, self.namespace, suffix);
+        let resp = self
+            .client
+            .post(&endpoint)
+            .bearer_auth(&self.token)
+            .json(&body)
+            .send()
+            .map_err(|e| e.to_string())?;
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(format!(
+                "HTTP {}: {}",
+                status,
+                resp.text().unwrap_or_default()
+            ));
+        }
+        let raw: Vec<RawDigest> = resp.json().map_err(|e| e.to_string())?;
+        Ok(raw
+            .into_iter()
+            .map(|d| Digest {
+                tree_key: d.tree_key,
+                label: d.label,
+                body: d.body,
+                score: d.score,
+            })
+            .collect())
+    }
 }
 
 impl CodeSearch for HttpCodeSearch {
@@ -74,6 +128,20 @@ impl CodeSearch for HttpCodeSearch {
             })
             .collect())
     }
+
+    fn get_architecture(&self, query: &str, limit: usize) -> Result<Vec<Digest>, String> {
+        self.post_digests(
+            "code/architecture",
+            json!({ "query": query, "limit": limit }),
+        )
+    }
+
+    fn get_module(&self, path: &str, query: &str, limit: usize) -> Result<Vec<Digest>, String> {
+        self.post_digests(
+            "code/module",
+            json!({ "path": path, "query": query, "limit": limit }),
+        )
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -93,6 +161,21 @@ pub fn format_hits(hits: &[CodeHit]) -> String {
             };
             let snippet: String = h.snippet.chars().take(400).collect();
             format!("{}  (score {:.2})\n{}", loc, h.score, snippet)
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+pub fn format_digests(items: &[Digest]) -> String {
+    if items.is_empty() {
+        return "No digest available (the repo may not be consolidated yet).".to_string();
+    }
+    items
+        .iter()
+        .map(|d| {
+            let head = d.label.clone().unwrap_or_else(|| d.tree_key.clone());
+            let body: String = d.body.chars().take(600).collect();
+            format!("[{}]  (score {:.2})\n{}", head, d.score, body)
         })
         .collect::<Vec<_>>()
         .join("\n\n")
@@ -123,6 +206,36 @@ fn search_code_tool_def() -> Value {
     })
 }
 
+fn get_architecture_tool_def() -> Value {
+    json!({
+        "name": "get_architecture",
+        "description": "High-level architecture digest of the indexed repo (the consolidated 'global' summary tree). An optional query focuses it.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": { "type": "string", "description": "optional focus query" },
+                "limit": { "type": "integer", "description": "max digest nodes (default 10)" }
+            }
+        }
+    })
+}
+
+fn get_module_tool_def() -> Value {
+    json!({
+        "name": "get_module",
+        "description": "Architecture digest for one directory/module. 'path' is a repo-relative directory (e.g. 'src/state').",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": { "type": "string", "description": "repo-relative directory (the module key)" },
+                "query": { "type": "string", "description": "optional focus query" },
+                "limit": { "type": "integer", "description": "max digest nodes (default 10)" }
+            },
+            "required": ["path"]
+        }
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Dispatch — the unit-tested core
 // ---------------------------------------------------------------------------
@@ -149,37 +262,45 @@ pub fn dispatch(req: &Value, backend: &dyn CodeSearch) -> Option<Value> {
         "tools/list" => Some(json!({
             "jsonrpc": "2.0",
             "id": id,
-            "result": { "tools": [search_code_tool_def()] }
+            "result": { "tools": [search_code_tool_def(), get_architecture_tool_def(), get_module_tool_def()] }
         })),
 
         "tools/call" => {
             let params = req.get("params").cloned().unwrap_or(Value::Null);
             let name = params.get("name").and_then(Value::as_str).unwrap_or("");
-
-            if name != "search_code" {
-                return Some(json!({
-                    "jsonrpc": "2.0",
-                    "id": id,
-                    "error": { "code": -32602, "message": "Unknown tool" }
-                }));
-            }
-
             let args = params.get("arguments").cloned().unwrap_or(Value::Null);
             let query = args.get("query").and_then(Value::as_str).unwrap_or("");
             let limit = args.get("limit").and_then(Value::as_u64).unwrap_or(10) as usize;
 
-            match backend.search(query, limit) {
-                Ok(hits) => {
-                    let text = format_hits(&hits);
-                    Some(json!({
+            let result: Result<String, String> = match name {
+                "search_code" => backend.search(query, limit).map(|h| format_hits(&h)),
+                "get_architecture" => backend
+                    .get_architecture(query, limit)
+                    .map(|d| format_digests(&d)),
+                "get_module" => {
+                    let path = args.get("path").and_then(Value::as_str).unwrap_or("");
+                    backend
+                        .get_module(path, query, limit)
+                        .map(|d| format_digests(&d))
+                }
+                _ => {
+                    return Some(json!({
                         "jsonrpc": "2.0",
                         "id": id,
-                        "result": {
-                            "content": [{ "type": "text", "text": text }],
-                            "isError": false
-                        }
+                        "error": { "code": -32602, "message": "Unknown tool" }
                     }))
                 }
+            };
+
+            match result {
+                Ok(text) => Some(json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": {
+                        "content": [{ "type": "text", "text": text }],
+                        "isError": false
+                    }
+                })),
                 Err(e) => Some(json!({
                     "jsonrpc": "2.0",
                     "id": id,
@@ -215,12 +336,34 @@ mod tests {
         fn search(&self, _query: &str, _limit: usize) -> Result<Vec<CodeHit>, String> {
             Ok(self.0.clone())
         }
+        fn get_architecture(&self, _q: &str, _l: usize) -> Result<Vec<Digest>, String> {
+            Ok(vec![Digest {
+                tree_key: "global".into(),
+                label: Some("auth · search · store".into()),
+                body: "global architecture digest".into(),
+                score: 0.0,
+            }])
+        }
+        fn get_module(&self, path: &str, _q: &str, _l: usize) -> Result<Vec<Digest>, String> {
+            Ok(vec![Digest {
+                tree_key: path.into(),
+                label: Some("module digest".into()),
+                body: format!("digest for {path}"),
+                score: 0.0,
+            }])
+        }
     }
 
     struct ErrorSearch(String);
 
     impl CodeSearch for ErrorSearch {
         fn search(&self, _query: &str, _limit: usize) -> Result<Vec<CodeHit>, String> {
+            Err(self.0.clone())
+        }
+        fn get_architecture(&self, _q: &str, _l: usize) -> Result<Vec<Digest>, String> {
+            Err(self.0.clone())
+        }
+        fn get_module(&self, _p: &str, _q: &str, _l: usize) -> Result<Vec<Digest>, String> {
             Err(self.0.clone())
         }
     }
@@ -301,6 +444,45 @@ mod tests {
             text.contains("src/bar.rs:5-7"),
             "should contain second path:line"
         );
+    }
+
+    #[test]
+    fn tools_list_includes_all_three_tools() {
+        let req = json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {} });
+        let resp = dispatch(&req, &no_hits()).unwrap();
+        let names: Vec<&str> = resp["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap())
+            .collect();
+        assert!(names.contains(&"search_code"));
+        assert!(names.contains(&"get_architecture"));
+        assert!(names.contains(&"get_module"));
+    }
+
+    #[test]
+    fn tools_call_get_architecture_formats_digest() {
+        let req = json!({
+            "jsonrpc": "2.0", "id": 7, "method": "tools/call",
+            "params": { "name": "get_architecture", "arguments": {} }
+        });
+        let resp = dispatch(&req, &no_hits()).unwrap();
+        assert_eq!(resp["result"]["isError"], false);
+        let text = resp["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("global architecture digest"));
+    }
+
+    #[test]
+    fn tools_call_get_module_passes_path() {
+        let req = json!({
+            "jsonrpc": "2.0", "id": 8, "method": "tools/call",
+            "params": { "name": "get_module", "arguments": { "path": "src/state" } }
+        });
+        let resp = dispatch(&req, &no_hits()).unwrap();
+        assert_eq!(resp["result"]["isError"], false);
+        let text = resp["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("digest for src/state"));
     }
 
     #[test]
