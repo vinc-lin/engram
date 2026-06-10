@@ -185,7 +185,9 @@ cold pipeline deterministically with `while worker_tick(...) {}`.
   `gateway:mxbai-embed-large:1024`, `hash:64`) is stored on every chunk/tree node, and reads
   filter by it (`chunks_for_namespace(ns, sig)`). Changing `ENGRAM_EMBED_MODEL` or
   `ENGRAM_EMBED_DIM` makes all existing chunks invisible (orphaned, not migrated) — a full
-  re-ingest is required.
+  re-ingest is required. **Model decision matrix (prose→mxbai, native code→bge-m3) + serving
+  gotchas (broken gateway bge-m3 route, single-URL embed/LLM coupling, 500-storm fix):
+  `docs/EMBEDDINGS.md`.**
 - **`GatewayEmbedder` is the prod embedder** (model `mxbai-embed-large`, dim 1024), routed
   through the litellm gateway, and so are LLM summaries (model `deepseek-chat`). When
   `ENGRAM_EMBED_FALLBACK` is set, `main.rs` wraps it in a `FallbackEmbedder` that adds a local
