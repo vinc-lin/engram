@@ -97,17 +97,47 @@ struct/typedef boundaries; resolve function names via `declarator`) before treat
 clear win on native code. Both modes still crush ripgrep/native, so this is a second-order tuning
 issue, not a regression vs the baselines.
 
+## Re-measure — after the two fixes (2026-06-10)
+
+Re-indexed all 3 repos on a binary carrying both fixes (fresh eval DB).
+
+**Fix 2 — abstention floor: a clean win.** Sweeping `ENGRAM_CODE_MIN_SCORE` (offline post-filter on
+the returned scores, `eval/harness/abstain_sweep.py`):
+
+| floor | recall@5 | hard-neg FP |
+|-------|----------|-------------|
+| 0.00 (off) | 0.815 | 9/9 |
+| 0.50 | 0.815 | 8/9 |
+| 0.55 | 0.806 | 4/9 |
+| **0.60** | **0.787** | **0/9** |
+| 0.65 | 0.556 | 0/9 |
+
+A floor of **0.60 eliminates all 9 hard-negative false positives at a ~3% recall cost**
+(0.815 → 0.787). **Recommendation: `ENGRAM_CODE_MIN_SCORE=0.60`** on the real deployment.
+
+**Fix 1 — C/C++ boundary chunking + declarator symbols: correct, but no metric change.** Lens-2 is
+*identical* before and after (e.g. ndk-samples recall@5 0.829, line-recall@10 0.593; libxcam cpp@5
+0.906). Why: the gold probes mostly target *functions* (already chunked as `function_definition`
+boundaries pre-fix), and the new `sym:` entities aren't consumed by `search_code` ranking. So the
+fix correctly isolates C/C++ structs into their own chunks and resolves C/C++ function names (a real
+correctness improvement — useful for `find_symbol` and future symbol-index features), but the C/C++
+line-recall characteristic vs heuristic is a **granularity tradeoff** (tight per-function chunks vs
+heuristic's wider windows that overlap the gold range), *not* a missing-struct-boundary bug — the
+hypothesis was wrong (cf. the earlier best-chunk dedup experiment). The remaining lever for native
+line-recall is a **wider-window / hybrid chunk mode for C/C++**, not finer boundaries.
+
 ## Verdict (for the real AVM deployment)
 
 1. **Adopt engram for retrieval — strong, robust signal.** It beats grep/native by a wide margin on
    recall and dominates line-recall (precise `path:line`), the core value for finding migration code.
 2. **Agent benefit is real but modest at this scale**, concentrated in cross-layer coverage; expect
    it to grow on the larger/messier real AVM repo. grep stays useful — keep engram *additive*.
-3. **Two concrete pre-deployment fixes**, both surfaced here:
-   - **C/C++ chunk-boundary coverage** (the Phase-7 line-recall regression) — refine `is_chunkable`
-     for native code; high value since AOSP AVM is C/C++ heavy.
-   - **A min-score floor for abstention** (hard-negative false positives) — cheap, prevents
-     confident-but-wrong hits.
+3. **Two fixes implemented + re-measured** (see "Re-measure" above):
+   - **Abstention floor — ship it.** `ENGRAM_CODE_MIN_SCORE=0.60` zeroes the hard-negative false
+     positives at ~3% recall cost.
+   - **C/C++ boundary chunking + symbols — landed for correctness, no retrieval-metric change.** The
+     C/C++ line-recall gap is a granularity tradeoff, not a struct-boundary bug; a wider-window /
+     hybrid chunk mode for native code is the real remaining lever.
 4. **Indexing is reliable** at this scale (0 failures after the `ENGRAM_INDEX_TIMEOUT_SECS` fix; a
    few unrelated `.py` 500s on libxcam).
 
