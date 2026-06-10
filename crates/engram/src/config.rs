@@ -168,6 +168,22 @@ pub fn code_native_pack() -> bool {
     })
 }
 
+/// Token budget for C/C++ definition-packing (Phase 8 native mode). Cached read of
+/// `ENGRAM_CODE_NATIVE_BUDGET` (default 480 = `CODE_CHUNK_TOKEN_BUDGET`). Only used when
+/// `ENGRAM_CODE_NATIVE_PACK` is on; raise it (e.g. 1500) with a long-context embedder so packed
+/// native chunks get genuinely wider than mxbai's 512-token cap allows.
+pub fn code_native_budget() -> usize {
+    use std::sync::OnceLock;
+    static CACHE: OnceLock<usize> = OnceLock::new();
+    *CACHE.get_or_init(|| {
+        std::env::var("ENGRAM_CODE_NATIVE_BUDGET")
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+            .filter(|&v| v >= 64)
+            .unwrap_or(480)
+    })
+}
+
 /// Minimum blended score for a `search_code` hit to be returned (abstention floor). Cached read of
 /// `ENGRAM_CODE_MIN_SCORE` (default 0.0 = off). Drops confident-but-wrong hits on absent topics.
 pub fn code_min_score() -> f64 {

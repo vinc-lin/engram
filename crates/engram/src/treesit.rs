@@ -199,10 +199,20 @@ fn parse(lang: Lang, content: &str) -> Option<tree_sitter::Tree> {
 /// Returns `(text, start_line, end_line)` (1-based, inclusive). `None` if unsupported or parse fails.
 pub fn chunk_code_ts(content: &str, lang: Lang) -> Option<Vec<(String, usize, usize)>> {
     let pack = matches!(lang, Lang::C | Lang::Cpp) && crate::config::code_native_pack();
-    chunk_segments(content, lang, pack)
+    let budget = if pack {
+        crate::config::code_native_budget()
+    } else {
+        CODE_CHUNK_TOKEN_BUDGET
+    };
+    chunk_segments(content, lang, pack, budget)
 }
 
-fn chunk_segments(content: &str, lang: Lang, pack: bool) -> Option<Vec<(String, usize, usize)>> {
+fn chunk_segments(
+    content: &str,
+    lang: Lang,
+    pack: bool,
+    budget: usize,
+) -> Option<Vec<(String, usize, usize)>> {
     let tree = parse(lang, content)?;
     let root = tree.root_node();
     let lines: Vec<&str> = content.lines().collect();
@@ -249,7 +259,7 @@ fn chunk_segments(content: &str, lang: Lang, pack: bool) -> Option<Vec<(String, 
         if text.trim().is_empty() {
             return;
         }
-        if estimate_tokens(&text) <= CODE_CHUNK_TOKEN_BUDGET {
+        if estimate_tokens(&text) <= budget {
             out.push((text, a, b));
         } else {
             // Sub-split an oversized definition with the heuristic chunker; offset line numbers.
@@ -266,7 +276,7 @@ fn chunk_segments(content: &str, lang: Lang, pack: bool) -> Option<Vec<(String, 
         let mut buf_tok = 0usize;
         for (s, e) in segments {
             let t = seg_tokens(s, e);
-            if t > CODE_CHUNK_TOKEN_BUDGET {
+            if t > budget {
                 if let Some((bs, be)) = buf.take() {
                     push(bs, be, &mut out);
                     buf_tok = 0;
@@ -279,7 +289,7 @@ fn chunk_segments(content: &str, lang: Lang, pack: bool) -> Option<Vec<(String, 
                     buf = Some((s, e));
                     buf_tok = t;
                 }
-                Some((bs, _)) if buf_tok + t <= CODE_CHUNK_TOKEN_BUDGET => {
+                Some((bs, _)) if buf_tok + t <= budget => {
                     buf = Some((bs, e));
                     buf_tok += t;
                 }
@@ -460,8 +470,8 @@ mod tests {
     #[test]
     fn native_pack_merges_small_c_defs() {
         let src = "int a() { return 1; }\nint b() { return 2; }\nint c() { return 3; }\nint d() { return 4; }\n";
-        let per_def = chunk_segments(src, Lang::C, false).unwrap();
-        let packed = chunk_segments(src, Lang::C, true).unwrap();
+        let per_def = chunk_segments(src, Lang::C, false, CODE_CHUNK_TOKEN_BUDGET).unwrap();
+        let packed = chunk_segments(src, Lang::C, true, CODE_CHUNK_TOKEN_BUDGET).unwrap();
         assert!(
             packed.len() < per_def.len(),
             "packed {} should be fewer than per-def {}",
