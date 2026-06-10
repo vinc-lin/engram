@@ -6,7 +6,7 @@ and the master plan it grew into. This file records *what shipped*.
 
 **The roadmap is complete — every phase is done.** Legend: ✅ done · 🔄 code-complete, live-quality bar pending.
 
-_Last updated: 2026-06-09. Published at `github.com/vinc-lin/engram` (origin/main in sync with the working tree)._
+_Last updated: 2026-06-10. Published at `github.com/vinc-lin/engram` (origin/main in sync with the working tree)._
 
 | Phase | Delivers | Status |
 |-------|----------|--------|
@@ -23,11 +23,12 @@ _Last updated: 2026-06-09. Published at `github.com/vinc-lin/engram` (origin/mai
 | 2 — Architecture digests | code-tuned module/global trees + `get_architecture`/`get_module` | 🔄 |
 | 3a — History / rationale | git-history ingest (`index-history`) + `why`/`find_symbol` | 🔄 |
 | 3b — Conventions | config+digest extraction → `:meta` doc + `get_conventions` | 🔄 |
-| 4 — Depth | tree-sitter chunking + AST symbols (6 langs) + MCP HTTP; reseal via stale-flush sweeper | ✅ |
+| 4 — Depth | tree-sitter chunking + AST symbols (10 langs) + MCP HTTP; reseal via stale-flush sweeper | ✅ |
+| 8 — Android/native depth + AVM eval | Kotlin/Java/C/C++ grammars, C/C++ definition-packing (native line-recall 0.59→0.89), agent A/B + retrieval eval | ✅ |
 
 The **closed loop is shipping**: `engram-index index <repo>` → engram (code-mode ingest,
 tree-sitter chunking + AST symbols, robust) → the 6 `engram-mcp` tools → coding agent. A
-`post-commit` hook keeps it current. 168 tests pass; clippy + fmt clean. The 🔄 phases (2, 3a, 3b)
+`post-commit` hook keeps it current. ~175 tests pass; clippy + fmt clean. The 🔄 phases (2, 3a, 3b)
 are code-complete and wired end-to-end; their *live quality bars* (non-fallback digests; `why` ≥ 0.7)
 need a consolidation / history-ingest run, which is cost-bearing and noted pending-live below.
 
@@ -45,7 +46,9 @@ These reset assumptions baked into the phases; each is now settled:
   bge-m3 vs the mxbai vectors already in the live DB, identical chunks — gave **mxbai
   0.267 / 0.600 / 0.600** vs **bge-m3 0.067 / 0.333 / 0.533** (recall@1/5/10); mxbai ranked the gold
   file better on 9 of 15 queries. A blind `mxbai → bge-m3` re-index would *lower* recall. → the swap
-  left the critical path; **production embeds with `mxbai-embed-large`.**
+  left the critical path; **production embeds with `mxbai-embed-large`.** *(Re-confirmed 2026-06-10
+  as a **drop-in** — bge-m3@480 still doesn't help; but bge-m3 IS the enabler for wide **native**
+  chunks, which lift C/C++ line-recall 0.59→0.89 — see the 2026-06-10 update below.)*
 - **The real recall lever is chunking/coverage, not the embed model.** Both models buried the
   `src/types.ts` queries (large type file, the answer isn't isolated). That granularity cap held
   regardless of embedder → addressed by symbol-split (**F**) and tree-sitter (**4**).
@@ -55,6 +58,41 @@ These reset assumptions baked into the phases; each is now settled:
 - **Code consolidation runs unread.** Code ingest can fan into trees and fire per-leaf LLM seals,
   but `search_code` reads chunks directly and never touches them — pure cost until the digest tools
   consume them. → gated off by default (`ENGRAM_CONSOLIDATE_CODE`, **R**).
+
+---
+
+## Update — 2026-06-10: Android grammars, the native line-recall fix, and the AVM evaluation
+
+Driven by a planned manual deployment on an automotive **Around View Monitor (AVM)** codebase
+(app-level Kotlin/Java + AOSP/system-level C/C++), three things landed on top of the phases above:
+
+- **Four new tree-sitter grammars — Kotlin, Java, C, C++** → Phase 4 now covers **10 langs**
+  (`.h`→C++, graceful fallback on parse failure). engram is now Android/native-capable in its
+  deployed config; `cargo test` ~175, clippy + fmt clean.
+- **The native line-recall fix (measured + attributed).** C/C++ definition-packing
+  (`ENGRAM_CODE_NATIVE_PACK`) plus a configurable `ENGRAM_CODE_NATIVE_BUDGET` lets a **long-context
+  embedder** (bge-m3, served locally on Ollama/GPU) use chunks far wider than mxbai's 512-token cap.
+  On ndk-samples: **C/C++ line-recall 0.593 → 0.889** (past the heuristic's 0.815), *holding* recall@5
+  (0.829) and improving recall@1/@10. A 3-way A/B attributes the win to **chunk width, not the model**
+  — bge-m3 as a drop-in (@480) barely moves line-recall (0.630) and is slightly worse on recall@5.
+  The real ceiling was the **embed budget**; a long-context model is how you raise it. → For
+  native-heavy repos: serve bge-m3 + `NATIVE_PACK=true` + `NATIVE_BUDGET=1500`, full re-index under
+  the new `gateway:bge-m3:1024` signature.
+- **A second eval suite — value, not just retrieval** (`eval/android/`: 108 probes + 15 cross-layer
+  feature footprints over 3 open-source Android proxies), with a litellm/DeepSeek coding agent
+  (`eval/agent/`) and a two-lens harness (`eval/harness/`):
+  - **Lens 2 (retrieval vs baselines):** engram decisively beats ripgrep + native read on
+    migration-relevant code, especially **cross-layer coverage** (it surfaces native + `Android.bp`
+    files grep misses).
+  - **Lens 1 (agent A/B):** an agent *with* engram's tools shows a modest but real edge over
+    *without* (≈ +0.10 cross-layer coverage on feature-migration footprints).
+  - **`search_code` abstention floor** (`ENGRAM_CODE_MIN_SCORE`, default off): zeroes hard-negative
+    false positives at a few-percent recall cost.
+  Full results + caveats: `eval/RESULTS_android.md`.
+
+**Net:** the *retrieval* half of engram is now validated on the deploy-representative languages
+(Kotlin/Java/C/C++), with native line precision solved. The `🔄` *consolidation* half (digests,
+`why`, conventions) is unchanged — still code-complete and live-quality-pending.
 
 ---
 
@@ -154,14 +192,16 @@ Live bar (pending a rebuild run): ≥ ~10 distinct conventions, each spot-checke
 
 ### Phase 4 — Depth ✅
 Tree-sitter function/type-boundary chunking + AST symbol extraction (`treesit.rs`) across Rust,
-Python, JS, TS, TSX, Go — gated by `ENGRAM_CODE_TREE_SITTER`, falling back to the heuristic chunker
-on unsupported langs / parse failure. The MCP server gains an HTTP JSON-RPC transport
+Python, JS, TS, TSX, Go, **Kotlin, Java, C, and C++** (10 langs; `.h`→C++) — gated by
+`ENGRAM_CODE_TREE_SITTER`, falling back to the heuristic chunker on unsupported langs / parse failure. The MCP server gains an HTTP JSON-RPC transport
 (`ENGRAM_MCP_HTTP`) beside stdio. **Reseal-stale-digests:** the freshness goal is already met by the
 stale-flush sweeper (`gate_exceeded`'s `stale` condition seals consolidated trees whose fresh leaves
 age past `seal_flush_age_secs`); the alternative reading — rewriting an already-sealed digest on
 re-ingest — is a deliberate non-goal, as it conflicts with the **sealed-nodes-immutable** invariant.
-Embedder-aware token budget stays deferred unless a model swap is justified (the bge-m3 A/B found it
-isn't — see Findings / Phase F).
+Embedder-aware token budget is **no longer fully deferred**: for native code, the C/C++
+definition-packing mode (`ENGRAM_CODE_NATIVE_PACK` + `ENGRAM_CODE_NATIVE_BUDGET`) lets a long-context
+embedder use wider chunks (see the 2026-06-10 update). Drop-in embed-model swaps on the TS corpus
+remain not a win (Findings / Phase F).
 **Live production numbers (tree-sitter config):** ingest 0.998, recall@1 0.543, recall@5 0.771,
 recall@10 0.914, line-recall@10 0.771. Recall journey: 0.533 (baseline) → 0.800 (Phase F) →
 tree-sitter (precision / coverage / line-accuracy up; recall@5 0.771 an accepted trade — best-chunk-
@@ -171,7 +211,11 @@ per-file dedup was tested and rejected; see `eval/RESULTS.md`).
 With-vs-without: an agent using the MCP tools scores higher on a fixed engram-question suite than
 without them. The baseline exists (Phase E); the richer digest / history / convention tools
 (2/3a/3b) are wired on top of `search_code`, so this is now measurable once their live quality bars
-are run.
+are run. **First measurement (2026-06-10, AVM eval):** a DeepSeek coding agent A/B (with vs without
+engram's tools) on Android feature-migration tasks showed a modest but real edge — chiefly ≈ +0.10
+cross-layer coverage (engram surfaces native + `Android.bp` files grep misses); retrieval-only
+(Lens 2) was a decisive win over ripgrep/native. Run on `search_code` (the proven path), not the
+`🔄` digest tools. See `eval/RESULTS_android.md`.
 
 ---
 
@@ -204,6 +248,7 @@ are run.
   backup. The deploy runs `target/release/engram` via `deploy/run.sh` (screen + reverse tunnel to
   `gateway-host`); LLM summaries route to `deepseek-chat`, embeddings to the gateway's
   `mxbai-embed-large` (dim 1024).
-- The gateway carries a `bge-m3` entry, but the A/B found it is not a quality win, so production
-  embeds with `mxbai-embed-large`; `ENGRAM_EMBED_FALLBACK` can layer a local Ollama embedder behind
-  the gateway. engram binds loopback (`127.0.0.1`); the reverse tunnel reaches `gateway-host`.
+- The gateway carries a `bge-m3` entry; as a **drop-in** it is not a quality win, so production
+  embeds with `mxbai-embed-large`. But bge-m3 served locally (Ollama/GPU) **does** unlock native-code
+  line precision via wide chunks (2026-06-10 update). `ENGRAM_EMBED_FALLBACK` can layer a local Ollama
+  embedder behind the gateway. engram binds loopback (`127.0.0.1`); the reverse tunnel reaches `gateway-host`.
