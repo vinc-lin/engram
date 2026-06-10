@@ -23,7 +23,7 @@ crates totalling ~8.8k lines of Rust:
 ```bash
 cargo build                 # debug (whole workspace)
 cargo build --release       # release (deploy uses target/release/engram)
-cargo test                  # all tests (inline #[cfg(test)] in every module, ~168)
+cargo test                  # all tests (inline #[cfg(test)] in every module, ~175)
 cargo test commit_ingest_is_atomic_and_enqueues   # run a single test by name (substring match)
 cargo test -- --ignored     # network tests, off by default: need a live Ollama / litellm gateway
 cargo clippy                # lints (clippy + fmt are clean; code carries #[allow(clippy::...)] in a few spots)
@@ -48,7 +48,7 @@ deploy/run.sh {start|stop|status|logs}
 
 Build note: `rusqlite` uses the `bundled` feature, so SQLite is compiled into the binary
 (no system libsqlite needed, but a C compiler is required). Tree-sitter grammars
-(Rust/Python/JS/TS/TSX/Go) are also compiled in, so a C compiler is required for that too.
+(Rust/Python/JS/TS/TSX/Go/Kotlin/Java/C/C++) are also compiled in, so a C compiler is required too.
 
 ## Architecture
 
@@ -89,7 +89,7 @@ network I/O.
 | `api.rs` | Router, `AppState` (`store`, `token`, `Arc<dyn Embedder>`, `Arc<dyn ChatClient>`), Bearer-auth middleware, handlers |
 | `store/` | SQLite layer split into a module dir: `mod.rs` (schema + open + write lock), `docs.rs`, `chunks.rs`, `entities.rs`, `jobs.rs`, `trees.rs` (single-writer, transactions, vector + entity + tree + job queries) |
 | `ingest.rs` | Chunking + mechanical entity extraction + `ingest_document` (hot path); **code-mode dispatch** on `meta.kind=="file"` |
-| `treesit.rs` | Tree-sitter function/type-boundary chunking + AST symbol extraction for Rust/Python/JS/TS/TSX/Go |
+| `treesit.rs` | Tree-sitter boundary chunking + AST symbols for 10 langs (Rust/Python/JS/TS/TSX/Go/Kotlin/Java/C/C++); C/C++ also support a definition-packing mode (`is_boundary`/`chunk_segments`) |
 | `conventions.rs` | `rebuild_conventions` — derives the per-repo conventions/architecture digest into `<ns>:meta` |
 | `retrieve.rs` | `query` (hybrid scoring), `search_code` (chunk-level code search), `recall` (recency), `drill_down` (tree BFS) |
 | `embed.rs` | `Embedder` trait + `HashEmbedder` (tests), `OllamaEmbedder`, `GatewayEmbedder` (prod), `FallbackEmbedder` (primary+fallback wrapper) |
@@ -120,10 +120,13 @@ per chunk → `commit_ingest` (atomic, also enqueues the consolidation job). Two
   `url:` / `handle:` / `hashtag:` (lowercased, sorted, deduped; URL spans masked before the
   handle/hashtag passes so `@x`/`#y` inside a URL aren't mis-extracted).
 - **Code mode** (dispatched on `meta.kind=="file"`): **tree-sitter function/type-boundary
-  chunking** (`treesit.rs`; Rust/Python/JS/TS/TSX/Go — falls back to the heuristic line/symbol
-  chunker `chunk_code` on unsupported langs or parse failure) + **AST symbol extraction**
-  yielding accurate `sym:` entities, plus an `import:` and `path:` entity. Token-aware and
-  CJK-safe; **per-chunk-tolerant** — a bad chunk is skipped, the rest still ingest.
+  chunking** (`treesit.rs`; Rust/Python/JS/TS/TSX/Go/Kotlin/Java/C/C++; `.h`→C++ — falls back to the
+  heuristic line/symbol chunker `chunk_code` on unsupported langs or parse failure) + **AST symbol
+  extraction** yielding accurate `sym:` entities, plus an `import:` and `path:` entity. Token-aware
+  and CJK-safe; **per-chunk-tolerant** — a bad chunk is skipped, the rest still ingest. C/C++ can
+  pack consecutive small definitions into wider, boundary-aligned chunks (`ENGRAM_CODE_NATIVE_PACK`
+  + `ENGRAM_CODE_NATIVE_BUDGET`) — only useful with a long-context embedder (mxbai truncates at 512
+  tok); validated to lift native line-recall 0.59→0.89 (see `eval/RESULTS_android.md`).
 
 ### Hybrid retrieval (`retrieve.rs`)
 `query` (prose) scores each candidate doc by its best chunk, blending three signals. **The same
@@ -135,7 +138,9 @@ count); otherwise it falls back to vector 0.65 / keyword 0.35. Each `Hit` expose
 `search_code` is **chunk-level** (not doc-level): vector cosine + keyword, plus a **path-type
 ranking prior** (gated by `ENGRAM_CODE_PATH_PRIOR`) that down-weights docs/tests/config so source
 ranks first. It returns `path:line` + a code snippet. It reads **chunks, not trees** — so code
-consolidation is unread until the digest tools (`get_architecture`/`get_module`) are used.
+consolidation is unread until the digest tools (`get_architecture`/`get_module`) are used. An
+optional abstention floor (`ENGRAM_CODE_MIN_SCORE`, default off) drops hits below a score so
+absent-topic queries return nothing instead of a confident-but-wrong hit.
 
 ### Autonomous consolidation (`tree.rs`)
 A worker claims a job and runs `process_doc`, which fans chunks out as level-0 leaves into a set
@@ -199,8 +204,10 @@ cold pipeline deterministically with `while worker_tick(...) {}`.
   code-KB / fallback ones (defaults in parens): `ENGRAM_EMBED_MODEL` (`mxbai-embed-large`),
   `ENGRAM_EMBED_DIM` (1024), `ENGRAM_EMBED_TIMEOUT_SECS` (30), `ENGRAM_EMBED_FALLBACK` (false),
   `ENGRAM_CONSOLIDATE_CODE` (false), `ENGRAM_CODE_SYMBOL_SPLIT` (true), `ENGRAM_CODE_PATH_PRIOR`
-  (true), `ENGRAM_CODE_TREE_SITTER` (true), `ENGRAM_MCP_HTTP` (unset), `ENGRAM_INDEX_TIMEOUT_SECS`
-  (120, read by `engram-index`, not the core `Config`). Plus the gateway/LLM ones:
+  (true), `ENGRAM_CODE_TREE_SITTER` (true), `ENGRAM_CODE_MIN_SCORE` (0.0 = off; search_code
+  abstention floor), `ENGRAM_CODE_NATIVE_PACK` (false), `ENGRAM_CODE_NATIVE_BUDGET` (480),
+  `ENGRAM_MCP_HTTP` (unset), `ENGRAM_INDEX_TIMEOUT_SECS` (120, read by `engram-index`, not the core
+  `Config`). Plus the gateway/LLM ones:
   `ENGRAM_GATEWAY_URL`, `ENGRAM_GATEWAY_KEY`, `ENGRAM_LLM_MODEL`, `ENGRAM_LLM_PROVIDER`.
 - **SQLite must live on native ext4, not the v9fs repo mount.** This repo lives on a Windows
   v9fs mount where WAL is flaky and `chmod` doesn't stick. Deploy keeps the DB, vault, logs, and
@@ -214,7 +221,7 @@ cold pipeline deterministically with `while worker_tick(...) {}`.
 ## Testing conventions
 
 Tests are inline `#[cfg(test)] mod tests` in each module (across all three crates) — there is no
-`tests/` dir; ~168 tests total, clippy + fmt clean. They build an ephemeral DB via
+`tests/` dir; ~175 tests total, clippy + fmt clean. They build an ephemeral DB via
 `tempfile::tempdir()` + `Store::open`, and use **`HashEmbedder`** (a deterministic, network-free
 bag-of-words embedder) so nothing touches the network. LLM doubles live in `llm.rs`
 (`FakeChatClient`, `NullAuditSink`). API tests use the `spawn()` / `spawn_full()` helpers in
@@ -229,3 +236,8 @@ line-recall + hard negatives over `eval/agentmemory_gold.json` (35 labeled NL→
 recall@5 0.771, recall@10 0.914, line-recall@10 0.771 — see `eval/RESULTS.md` for the recall
 journey (0.533 baseline → 0.800 Phase F → tree-sitter, which trades a little recall@5 for higher
 precision/coverage/line-accuracy).
+
+There is also a **second eval suite for Android feature-migration** (`eval/android/avm_gold.json`,
+108 probes + 15 cross-layer feature footprints): `eval/agent/` is a litellm tool-calling coding
+agent (DeepSeek/Qwen) and `eval/harness/` runs Lens-2 (retrieval vs ripgrep/native) + Lens-1
+(agent A/B). Findings in `eval/RESULTS_android.md`.
