@@ -150,6 +150,35 @@ windows. **Recommendation: keep it as an opt-in knob** (`ENGRAM_CODE_NATIVE_PACK
 enable for small-function native-heavy code. Full native line-recall parity would need overlapping
 windows or a larger-context embed model — out of scope here.
 
+## bge-m3 + wide native chunks (2026-06-10) — the native line-recall fix that WORKED
+
+Set up bge-m3 locally (Ollama, GPU, 8k context — `~/start-ollama-wsl.sh`) and re-indexed ndk-samples
+*through engram* with the new `ENGRAM_CODE_NATIVE_BUDGET`. Three configs, same gold:
+
+| metric | A: mxbai @480 | B: bge-m3 @480 | C: bge-m3 @wide(1500) |
+|--------|------|------|------|
+| recall@1 | 0.371 | 0.286 | **0.514** |
+| recall@5 | 0.829 | 0.800 | **0.829** |
+| recall@10 | 0.886 | 0.857 | **0.943** |
+| line-recall@10 | 0.593 | 0.630 | **0.889** |
+| cpp recall@5 | 0.846 | 0.846 | **0.885** |
+
+**Conclusive and attributed.** C (bge-m3 + wide native chunks) lifts native **line-recall
+0.593 → 0.889** (+0.296 — *past* the heuristic's 0.815) while *holding* recall@5 (0.829) and
+*improving* recall@1 (+0.143) and recall@10 (+0.057). The attribution is clean: **B (bge-m3 drop-in
+at 480) barely moves line-recall (0.630) and slightly hurts recall@5/@1** — so the win is the
+**wider chunks**, not bge-m3 per se. bge-m3's role is purely *enabling* the width — its 8k context
+embeds 1500-token chunks without truncation, which mxbai's 512 cap cannot. The embed budget was the
+real ceiling all along; a long-context model + wide native packing breaks through it. (Index was
+fast: 95s / 0 failures via local bge-m3 on the GPU.)
+
+**Validated recipe for native line-recall:** a long-context embedder (bge-m3, served locally on
+Ollama/GPU) + `ENGRAM_CODE_NATIVE_PACK=true` + `ENGRAM_CODE_NATIVE_BUDGET=1500`, full re-index under
+the `gateway:bge-m3:1024` signature. Caveat: ndk-samples is C/C++-heavy (where this shines), and
+bge-m3 drop-in is slightly weaker on non-native recall@5 — so the net is strongest for native-heavy
+code (AOSP AVM); verify on the real language mix. libxcam (line-recall already 0.92) and gpuimage
+(0.76) were not re-tested with bge-wide.
+
 ## Verdict (for the real AVM deployment)
 
 1. **Adopt engram for retrieval — strong, robust signal.** It beats grep/native by a wide margin on
@@ -159,9 +188,10 @@ windows or a larger-context embed model — out of scope here.
 3. **Two fixes implemented + re-measured** (see "Re-measure" above):
    - **Abstention floor — ship it.** `ENGRAM_CODE_MIN_SCORE=0.60` zeroes the hard-negative false
      positives at ~3% recall cost.
-   - **C/C++ boundary chunking + symbols — landed for correctness, no retrieval-metric change.** The
-     C/C++ line-recall gap is a granularity tradeoff, not a struct-boundary bug; a wider-window /
-     hybrid chunk mode for native code is the real remaining lever.
+   - **C/C++ line-recall — SOLVED** (0.593 → 0.889; see the bge-m3 section). The struct-boundary fix
+     and pack@480 were neutral; the real ceiling was the **512-token embed budget**. A long-context
+     embedder (bge-m3, local Ollama/GPU) + `ENGRAM_CODE_NATIVE_PACK=true` + `ENGRAM_CODE_NATIVE_BUDGET=1500`
+     breaks through it, at the cost of a full re-index under the bge-m3 signature (best for native-heavy repos).
 4. **Indexing is reliable** at this scale (0 failures after the `ENGRAM_INDEX_TIMEOUT_SECS` fix; a
    few unrelated `.py` 500s on libxcam).
 
