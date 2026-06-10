@@ -126,6 +126,30 @@ heuristic's wider windows that overlap the gold range), *not* a missing-struct-b
 hypothesis was wrong (cf. the earlier best-chunk dedup experiment). The remaining lever for native
 line-recall is a **wider-window / hybrid chunk mode for C/C++**, not finer boundaries.
 
+## Native-code chunk mode A/B — definition-packing for C/C++ (2026-06-10)
+
+Prototyped `ENGRAM_CODE_NATIVE_PACK`: for C/C++, pack consecutive small definitions (+ gaps) into
+wider, boundary-aligned chunks up to the token budget instead of one chunk per definition. Indexed
+all 3 repos with it on (`:8091`) and re-ran Lens 2.
+
+| repo | metric | no-pack | pack | Δ |
+|------|--------|---------|------|---|
+| ndk-samples | line-recall@10 | 0.593 | **0.667** | **+0.074** |
+| | recall@10 | 0.886 | 0.914 | +0.028 |
+| | recall@5 | 0.829 | 0.829 | 0 |
+| libxcam | line-recall@10 | 0.92 | 0.92 | 0 (already at ceiling) |
+| gpuimage-plus | line-recall@10 | 0.76 | 0.76 | 0 (large C++ defs don't merge) |
+
+**A safe but narrow win.** Packing lifts ndk-samples line-recall +0.074 with **zero recall@5 cost**
+(the intended shape — wider chunks recover line-recall, boundaries keep file recall), and is exactly
+neutral on libxcam (already 0.92) and gpuimage (its C++ defs are large, so nothing merges). It
+**never hurts**. But it closes only ~half the ndk gap to the heuristic's 0.815, because **both
+heuristic and packed chunks are capped at the ~480-token embed budget** (mxbai's 512-token limit) —
+packing can't widen native chunks further; the residual gap is boundary-aligned packing vs pure-line
+windows. **Recommendation: keep it as an opt-in knob** (`ENGRAM_CODE_NATIVE_PACK`, default off);
+enable for small-function native-heavy code. Full native line-recall parity would need overlapping
+windows or a larger-context embed model — out of scope here.
+
 ## Verdict (for the real AVM deployment)
 
 1. **Adopt engram for retrieval — strong, robust signal.** It beats grep/native by a wide margin on
