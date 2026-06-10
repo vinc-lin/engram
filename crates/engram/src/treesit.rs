@@ -194,9 +194,15 @@ fn parse(lang: Lang, content: &str) -> Option<tree_sitter::Tree> {
 
 /// Chunk code on function/type boundaries. Each top-level definition becomes its own chunk;
 /// inter-definition lines (imports, comments) are grouped into gap chunks; oversized definitions
-/// are sub-split with the heuristic chunker. Returns `(text, start_line, end_line)` (1-based,
-/// inclusive). `None` if the language is unsupported or parsing fails.
+/// are sub-split with the heuristic chunker. For C/C++ with `ENGRAM_CODE_NATIVE_PACK`, consecutive
+/// small definitions are packed into wider, boundary-aligned chunks (better native line-recall).
+/// Returns `(text, start_line, end_line)` (1-based, inclusive). `None` if unsupported or parse fails.
 pub fn chunk_code_ts(content: &str, lang: Lang) -> Option<Vec<(String, usize, usize)>> {
+    let pack = matches!(lang, Lang::C | Lang::Cpp) && crate::config::code_native_pack();
+    chunk_segments(content, lang, pack)
+}
+
+fn chunk_segments(content: &str, lang: Lang, pack: bool) -> Option<Vec<(String, usize, usize)>> {
     let tree = parse(lang, content)?;
     let root = tree.root_node();
     let lines: Vec<&str> = content.lines().collect();
@@ -217,6 +223,23 @@ pub fn chunk_code_ts(content: &str, lang: Lang) -> Option<Vec<(String, usize, us
     }
     spans.sort();
 
+    // Ordered contiguous segments covering 1..=total (gaps interleaved with definitions).
+    let mut segments: Vec<(usize, usize)> = Vec::new();
+    let mut pos = 1usize;
+    for (s, e) in spans {
+        if s < pos {
+            continue; // nested/overlapping — already covered
+        }
+        if s > pos {
+            segments.push((pos, s - 1)); // gap (imports, comments, top-level statements)
+        }
+        segments.push((s, e)); // the definition
+        pos = e + 1;
+    }
+    if pos <= total {
+        segments.push((pos, total)); // trailing gap
+    }
+
     let mut out: Vec<(String, usize, usize)> = Vec::new();
     let push = |a: usize, b: usize, out: &mut Vec<(String, usize, usize)>| {
         if a > b || a < 1 || b > total {
@@ -236,19 +259,44 @@ pub fn chunk_code_ts(content: &str, lang: Lang) -> Option<Vec<(String, usize, us
         }
     };
 
-    let mut pos = 1usize;
-    for (s, e) in spans {
-        if s < pos {
-            continue; // nested/overlapping — already covered
+    if pack {
+        // Pack consecutive segments into wider, boundary-aligned chunks up to the token budget.
+        let seg_tokens = |a: usize, b: usize| estimate_tokens(&lines[a - 1..b].join("\n"));
+        let mut buf: Option<(usize, usize)> = None;
+        let mut buf_tok = 0usize;
+        for (s, e) in segments {
+            let t = seg_tokens(s, e);
+            if t > CODE_CHUNK_TOKEN_BUDGET {
+                if let Some((bs, be)) = buf.take() {
+                    push(bs, be, &mut out);
+                    buf_tok = 0;
+                }
+                push(s, e, &mut out); // oversized single segment — sub-split inside push
+                continue;
+            }
+            match buf {
+                None => {
+                    buf = Some((s, e));
+                    buf_tok = t;
+                }
+                Some((bs, _)) if buf_tok + t <= CODE_CHUNK_TOKEN_BUDGET => {
+                    buf = Some((bs, e));
+                    buf_tok += t;
+                }
+                Some((bs, be)) => {
+                    push(bs, be, &mut out);
+                    buf = Some((s, e));
+                    buf_tok = t;
+                }
+            }
         }
-        if s > pos {
-            push(pos, s - 1, &mut out); // gap (imports, comments, top-level statements)
+        if let Some((bs, be)) = buf {
+            push(bs, be, &mut out);
         }
-        push(s, e, &mut out); // the definition
-        pos = e + 1;
-    }
-    if pos <= total {
-        push(pos, total, &mut out);
+    } else {
+        for (s, e) in segments {
+            push(s, e, &mut out);
+        }
     }
     Some(out)
 }
@@ -407,5 +455,27 @@ mod tests {
     fn malformed_cpp_does_not_panic() {
         // Garbage / truncated C++ still parses to a (possibly error-laden) tree, never panics.
         assert!(chunk_code_ts("class { void (( ; namespace }{", Lang::Cpp).is_some());
+    }
+
+    #[test]
+    fn native_pack_merges_small_c_defs() {
+        let src = "int a() { return 1; }\nint b() { return 2; }\nint c() { return 3; }\nint d() { return 4; }\n";
+        let per_def = chunk_segments(src, Lang::C, false).unwrap();
+        let packed = chunk_segments(src, Lang::C, true).unwrap();
+        assert!(
+            packed.len() < per_def.len(),
+            "packed {} should be fewer than per-def {}",
+            packed.len(),
+            per_def.len()
+        );
+        // Packed chunks still cover every definition (full coverage, just wider).
+        let joined: String = packed
+            .iter()
+            .map(|(t, _, _)| t.clone())
+            .collect::<Vec<_>>()
+            .join("\n");
+        for f in ["int a", "int b", "int c", "int d"] {
+            assert!(joined.contains(f), "{f} missing from packed chunks");
+        }
     }
 }

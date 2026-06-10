@@ -150,6 +150,24 @@ pub fn code_tree_sitter() -> bool {
     })
 }
 
+/// Whether C/C++ tree-sitter chunking packs consecutive small definitions into wider,
+/// boundary-aligned chunks (up to the token budget) instead of one chunk per definition. Cached
+/// read of `ENGRAM_CODE_NATIVE_PACK` (default false). Targets native-code line-recall.
+pub fn code_native_pack() -> bool {
+    use std::sync::OnceLock;
+    static CACHE: OnceLock<bool> = OnceLock::new();
+    *CACHE.get_or_init(|| {
+        std::env::var("ENGRAM_CODE_NATIVE_PACK")
+            .ok()
+            .and_then(|s| match s.to_ascii_lowercase().as_str() {
+                "true" | "1" | "yes" | "on" => Some(true),
+                "false" | "0" | "no" | "off" => Some(false),
+                _ => None,
+            })
+            .unwrap_or(false)
+    })
+}
+
 /// Minimum blended score for a `search_code` hit to be returned (abstention floor). Cached read of
 /// `ENGRAM_CODE_MIN_SCORE` (default 0.0 = off). Drops confident-but-wrong hits on absent topics.
 pub fn code_min_score() -> f64 {
