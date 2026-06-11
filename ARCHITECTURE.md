@@ -38,8 +38,8 @@ commits, `meta.kind == "commit"`) and `repo:<id>:meta` (the conventions doc). Pr
 | `retrieve.rs`   | pipeline | `query` (hybrid), `search_code` (chunk-level + path prior), `recall`, `drill_down` |
 | `llm.rs`        | io       | Chat + audit traits, gateway clients, `summarize_audited` |
 | `ingest.rs`     | pipeline | Prose + code chunking, entity extraction, `ingest_document` (code-mode dispatch) |
-| `treesit.rs`    | pipeline | tree-sitter function/type-boundary chunking + AST symbol extraction (code mode) |
-| `conventions.rs`| pipeline | `meta` namespace + conventions doc rebuild/read (config-file digest) |
+| `treesit.rs`    | pipeline | tree-sitter function/type-boundary chunking + AST symbol extraction (10 langs; code mode) |
+| `conventions.rs`| pipeline | `meta` namespace: conventions digest + single-pass architecture/module digests (rebuild/read) |
 | `embed.rs`      | io       | `Embedder` trait + Hash/Ollama/Gateway/**Fallback** impls |
 | `vault.rs`      | io       | Optional Obsidian markdown mirror |
 | `jobs.rs`       | infra    | `JobProcessor` trait, `worker_tick`, `spawn_workers` |
@@ -140,7 +140,7 @@ Intra-crate edges (within `crates/engram`) from `use crate::…` **and** fully-q
 - **Routes:** `GET /healthz` (open); under Bearer auth:
   - `GET/POST /v1/:namespace/docs`, `GET /v1/:namespace/docs/:id`, `GET/DELETE /v1/:namespace/docs/by-key/:key`
   - `POST /v1/:namespace/query`, `GET /v1/:namespace/recall`, `POST /v1/:namespace/tree`
-  - **Code KB:** `POST /v1/:namespace/code/search`, `POST /v1/:namespace/code/architecture` (global digest), `POST /v1/:namespace/code/module` (a directory's digest)
+  - **Code KB:** `POST /v1/:namespace/code/search`, `POST /v1/:namespace/code/architecture` (global digest), `POST /v1/:namespace/code/architecture/rebuild` (single-pass rebuild → `:meta`), `POST /v1/:namespace/code/module` (a directory's digest)
   - **Conventions:** `POST /v1/:namespace/conventions/rebuild`, `GET /v1/:namespace/conventions`
 - **Notes:** auth = exact Bearer string match. Handlers that embed or summarize (`ingest_doc`, `query_docs`, `tree_query`, `search_code_docs`, `get_architecture`, `get_module`, the conventions handlers) wrap work in `tokio::task::spawn_blocking` (the embedder/LLM use blocking HTTP clients). `list_docs` hard-caps at 100. The MCP server's six tools map onto `/code/search`, `/code/architecture`, `/code/module`, `/query`, `GET /conventions` (and `POST /conventions/rebuild`), and `/tree` (see §6a).
 
@@ -157,12 +157,12 @@ Intra-crate edges (within `crates/engram`) from `use crate::…` **and** fully-q
 - **Notes:** prose path: paragraph chunking `MAX_CHUNK_CHARS=800` (char-based, CJK-safe), regex entities `email:/url:/handle:/hashtag:` (lowercased, sorted, deduped, URL-masked). **Code mode** (dispatched on `meta.kind == "file"`): tree-sitter boundary chunking via `treesit` when `code_tree_sitter` is on and the language is supported, else the heuristic line/symbol chunker `chunk_code_with`; AST symbols (`sym:`) merged with the regex `extract_code_entities` (`sym:` / `import:`), plus a `path:` entity. Token-aware (`CODE_CHUNK_TOKEN_BUDGET`, kept under the embed model's 512-token ceiling) and **per-chunk tolerant** (a bad chunk is skipped, the rest ingest). Both paths embed off-lock then `commit_ingest`.
 
 ### `treesit.rs` — tree-sitter code chunking + symbols
-- **Surface:** `Lang` (Rust/Python/JavaScript/TypeScript/Tsx/Go), `lang_for_path`, `chunk_code_ts`, `extract_symbols_ts`.
-- **Notes:** maps a file extension to a grammar, walks the parse tree splitting at definition boundaries (functions/types/classes/impls/etc.), and extracts accurate `sym:` identifiers from declaration nodes. Returns `None` on unsupported language or parse failure, so `ingest` cleanly falls back to `chunk_code_with` + regex symbols. Grammars are linked in via the `tree-sitter-*` crates.
+- **Surface:** `Lang` (Rust/Python/JavaScript/TypeScript/Tsx/Go/Kotlin/Java/C/C++), `lang_for_path`, `chunk_code_ts`, `extract_symbols_ts`.
+- **Notes:** maps a file extension to a grammar (10 languages; `.h` routes to the C++ grammar), walks the parse tree splitting at definition boundaries (functions/types/classes/impls/etc.), and extracts accurate `sym:` identifiers from declaration nodes. Returns `None` on unsupported language or parse failure, so `ingest` cleanly falls back to `chunk_code_with` + regex symbols. C/C++ additionally support a definition-packing mode (`is_boundary` / `chunk_segments`) that packs consecutive small defs into wider, boundary-aligned chunks (`ENGRAM_CODE_NATIVE_PACK` + `ENGRAM_CODE_NATIVE_BUDGET`). Grammars are linked in via the `tree-sitter-*` crates.
 
-### `conventions.rs` — meta namespace + conventions doc
-- **Surface:** `meta_namespace`, `is_config_file`, `rebuild_conventions`, `get_conventions` read path.
-- **Notes:** the `repo:<id>:meta` namespace holds a single rolled-up *conventions* document. `rebuild_conventions` `drill_down`s the meta namespace (config-file digests) and `ingest_document`s the result; `GET /conventions` returns it. `is_config_file` classifies config-ish keys.
+### `conventions.rs` — meta namespace + single-pass digests
+- **Surface:** `meta_namespace`, `is_config_file`, `rebuild_conventions`, `rebuild_architecture_digest`, `get_conventions` read path.
+- **Notes:** the `repo:<id>:meta` namespace holds rolled-up digest documents keyed by purpose: `conventions`, `architecture` (global), and `module:<dir>` (per-directory). `rebuild_conventions` `drill_down`s the meta namespace (config-file digests) and `ingest_document`s the result; `GET /conventions` returns it. **`rebuild_architecture_digest`** builds the architecture / `module:<dir>` digests in a **single LLM pass over the repo's whole source files** (with extractive overflow when the source overruns the context), then stores the result in `:meta` — so `get_architecture` / `get_module` serve a cached one-shot digest rather than folding the consolidation tree. One compression pass preserves the specifics a deep summary-of-summaries fold loses (measured: one-shot 1.58 vs tree 1.08 of 2 — see `eval/RESULTS_distillation.md`). `is_config_file` classifies config-ish keys.
 
 ### `embed.rs` — embedding abstraction
 - **Surface:** `trait Embedder { embed, signature, dim }`; `HashEmbedder` (tests), `OllamaEmbedder` (`/api/embeddings`), `GatewayEmbedder` (`/v1/embeddings`, prod), **`FallbackEmbedder`** (wraps a primary + a local Ollama fallback).
@@ -235,8 +235,8 @@ backed by `OllamaEmbedder`.
 | Tool | What it answers | Backing endpoint |
 |------|-----------------|------------------|
 | `search_code(query)` | chunk-level code search (`path:line` + snippet) | `POST /code/search` |
-| `get_architecture()` | the global digest of the repo | `POST /code/architecture` |
-| `get_module(path)` | a directory's digest | `POST /code/module` |
+| `get_architecture()` | the global digest of the repo (cached single-pass digest from `:meta`) | `POST /code/architecture` |
+| `get_module(path)` | a directory's digest (cached single-pass digest from `:meta`) | `POST /code/module` |
 | `why(query)` | relevant git-history commits | `POST /query` (history namespace) |
 | `find_symbol(name)` | where a symbol is defined | `POST /code/search` (symbol query) |
 | `get_conventions()` | the repo's conventions doc | `GET /conventions` |
@@ -298,9 +298,14 @@ score each chunk `vec+keyword` × `path_prior` (down-weights docs/tests/config) 
 MCP server (`engram-mcp`) consumes it (also as `find_symbol`).
 
 **Architecture / module digests — `POST /v1/:ns/code/{architecture,module}`:** `spawn_blocking`
-→ `retrieve::drill_down` over the **global** tree (architecture) or a directory-keyed **module**
-tree (module, body = directory `path`). These read consolidated digests, so they need a
-consolidation run with `consolidate_code` enabled to return non-fallback summaries.
+→ serve the **cached single-pass digest** from `repo:<id>:meta` (key `architecture` or
+`module:<dir>`), built by `POST .../code/architecture/rebuild` → `conventions::rebuild_architecture_digest`
+(one LLM summary over the repo's whole source files, with extractive overflow). If no single-pass
+digest is cached, fall back to `retrieve::drill_down` over the **global** tree (architecture) or a
+directory-keyed **module** tree (module, body = directory `path`) — which itself needs a
+consolidation run with `consolidate_code` enabled to return non-fallback summaries. The single-pass
+digest is preferred because one compression pass keeps the specifics a summary-of-summaries fold
+drops (see `eval/RESULTS_distillation.md`).
 
 **Conventions — `GET /v1/:ns/conventions` & `POST .../conventions/rebuild`:** the read returns
 the `repo:<id>:meta` conventions doc; the rebuild (`spawn_blocking`) digests config-file
@@ -342,16 +347,32 @@ read via `get_by_key`.
 | `ENGRAM_LLM_PROVIDER` | `ollama` | `ENGRAM_CONSOLIDATE_CODE` | `false` |
 | `ENGRAM_LLM_TIMEOUT_SECS` | `90` | `ENGRAM_CODE_SYMBOL_SPLIT` | `true` |
 | `ENGRAM_AUDIT_URL` | `http://127.0.0.1:8383` | `ENGRAM_CODE_PATH_PRIOR` | `true` |
-| | | `ENGRAM_CODE_TREE_SITTER` | `true` |
+| `ENGRAM_EMBED_URL` | = `ENGRAM_GATEWAY_URL` | `ENGRAM_CODE_TREE_SITTER` | `true` |
+| `ENGRAM_EMBED_FALLBACK` | `false` | `ENGRAM_CODE_MIN_SCORE` | `0.0` (off) |
+| | | `ENGRAM_CODE_NATIVE_PACK` | `false` |
+| | | `ENGRAM_CODE_NATIVE_BUDGET` | `480` |
 
-`ENGRAM_MCP_HTTP` (unset → stdio) is read by **`crates/engram-mcp`**, not the core `Config`.
-The three `ENGRAM_CODE_*` toggles are read via cached `OnceLock` free functions
-(`code_symbol_split` / `code_path_prior` / `code_tree_sitter`) rather than the `Config` struct.
+`ENGRAM_EMBED_URL` defaults to `ENGRAM_GATEWAY_URL`; set it to route **embeddings** to a separate
+backend (e.g. a local bge-m3 Ollama) while LLM/chat calls stay on the gateway — decoupling the
+embedder from the LLM (they used to share one URL). Full guide: `docs/EMBEDDINGS.md`.
+
+`ENGRAM_MCP_HTTP` (unset → stdio) is read by **`crates/engram-mcp`**, and `ENGRAM_INDEX_TIMEOUT_SECS`
+(`120`) by **`crates/engram-index`**, neither by the core `Config`. The `ENGRAM_CODE_*` toggles
+(`code_symbol_split` / `code_path_prior` / `code_tree_sitter`) and the native-pack / min-score knobs
+(`code_native_pack` / `code_native_budget` / `code_min_score`) are read via cached `OnceLock` free
+functions rather than the `Config` struct.
 
 Parsing is permissive: missing/invalid values silently use the default (no validation, no
 required vars; an empty `ENGRAM_GATEWAY_KEY` is accepted; an unrecognized boolean falls back to
 its default). **Deployed values differ from the code defaults:** embeddings route through the
 litellm gateway as `mxbai-embed-large` (dim 1024) and LLM summaries as `deepseek-chat`.
+
+**Embedding-model guidance (don't swap casually).** Production embeds with `mxbai-embed-large`
+(dim 1024). `bge-m3` is **not** a better prose embedder (measured ~equal or worse as a drop-in);
+its value is **enabling wide C/C++ chunks** (`ENGRAM_CODE_NATIVE_PACK` + `ENGRAM_CODE_NATIVE_BUDGET`
+≈1500), which lifts native line-recall 0.59→0.89. Changing `ENGRAM_EMBED_MODEL`/`_DIM` orphans all
+existing chunks (signature change ⇒ full re-index). The decision matrix + serving gotchas (the
+gateway's broken bge-m3 route, the `ENGRAM_EMBED_URL` split) live in `docs/EMBEDDINGS.md`.
 
 ---
 
@@ -366,7 +387,7 @@ litellm gateway as `mxbai-embed-large` (dim 1024) and LLM summaries as `deepseek
 | `serde` + `serde_json` | (De)serialization of wire types + JSON bodies |
 | `reqwest` 0.12 (`json`, `blocking`, `default-features=false`) | HTTP client for embed/LLM/audit |
 | `regex` | Mechanical entity extraction |
-| `tree-sitter` 0.23 + `tree-sitter-{rust,python,javascript,typescript,go}` | Code-mode boundary chunking + AST symbols (`treesit.rs`) |
+| `tree-sitter` 0.23 + `tree-sitter-{rust,python,javascript,typescript,go,kotlin,java,c,cpp}` | Code-mode boundary chunking + AST symbols (`treesit.rs`); 10 languages (`.h` → C++) |
 | `uuid` (`v4`) | `document_id` / `node_id` / audit `event_id` |
 | `thiserror` | `Error` derive |
 | `tracing` + `tracing-subscriber` | Structured logging |
@@ -415,7 +436,7 @@ Starting points for deeper analysis, derived from the structure above:
 - **Background-thread observability.** Worker/sweeper errors are `tracing::warn!`-logged and otherwise invisible; `failed` jobs accumulate with no surfaced metric beyond `pending_jobs()`.
 - **"Forget" is incomplete by design.** `delete_doc_by_key` removes the doc, chunks, entities, pending job, and *unsealed* leaves, but a forgotten doc's text can persist inside already-**sealed summary bodies** (immutable history) and in the optional vault mirror (write-only, never deleted). Relevant for any true-deletion / right-to-erasure requirement.
 - **`meta` is semi-opaque.** Stored as TEXT and round-tripped untouched, but `kind` is now load-bearing (dispatches code/commit modes). It is still not a filterable retrieval signal beyond that dispatch.
-- **Code-digest quality is pending a live run.** `search_code` (chunks) is live; the consolidated `get_architecture`/`get_module` digests and `why` need a consolidation/history-ingest run (with `consolidate_code` on) to clear their quality bars — code-complete but pending-live.
+- **Digest path is single-pass, tree is fallback.** `get_architecture`/`get_module` now serve a cached **single-pass** digest from `:meta` (built by `conventions::rebuild_architecture_digest`); the consolidation-tree drill is only a fallback when none is cached. One compression pass beat the summary-of-summaries fold in measurement (`eval/RESULTS_distillation.md`). `search_code` (chunks) is live; the `why` history path still needs a history-ingest run to clear its relevance bar.
 
 ---
 
@@ -426,6 +447,12 @@ Starting points for deeper analysis, derived from the structure above:
 (tree-sitter config): **ingest 0.998, recall@1 0.543, recall@5 0.771, recall@10 0.914,
 line-recall@10 0.771**. Recall journey: 0.533 baseline → 0.800 (heuristic Phase F) → tree-sitter
 (precision/coverage/line-accuracy up; recall@5 0.771 an accepted trade — see `eval/RESULTS.md`).
+
+Two further eval suites back the code-KB work: **`eval/RESULTS_android.md`** (AVM Android
+feature-migration eval — the 10-language tree-sitter grammars, the native line-recall fix via wide
+C/C++ chunks, and an agent A/B) and **`eval/RESULTS_distillation.md`** (distillation vs simple
+summary — the consolidation tree digest *loses* to a single-pass summary, motivating the
+single-pass `rebuild_architecture_digest` path).
 
 The roadmap (phases 0, 1a, 1a.1, A, B, 1b, 1c, E, F, R, 2, 3a, 3b, 4) is **complete**; phases 2 /
 3a / 3b are code-complete with their live quality bars (non-fallback digests; `why` quality)

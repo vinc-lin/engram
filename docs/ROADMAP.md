@@ -20,7 +20,7 @@ _Last updated: 2026-06-10. Published at `github.com/vinc-lin/engram` (origin/mai
 | E — Validation gate | first real baseline measured + harness tightened (recall@1/5/10, line-hits) | ✅ |
 | F — Retrieval quality | symbol-split chunking + path prior → **recall@5 0.80 / ingest 0.998 PASS** | ✅ |
 | R — Reliability | FallbackEmbedder + `ENGRAM_CONSOLIDATE_CODE` gate + tunnel guard (deploy hardened) | ✅ |
-| 2 — Architecture digests | code-tuned module/global trees + `get_architecture`/`get_module` | 🔄 |
+| 2 — Architecture digests | single-pass module/global digest (`conventions::rebuild_architecture_digest`) → `get_architecture`/`get_module`; tree is fallback | 🔄 |
 | 3a — History / rationale | git-history ingest (`index-history`) + `why`/`find_symbol` | 🔄 |
 | 3b — Conventions | config+digest extraction → `:meta` doc + `get_conventions` | 🔄 |
 | 4 — Depth | tree-sitter chunking + AST symbols (10 langs) + MCP HTTP; reseal via stale-flush sweeper | ✅ |
@@ -94,6 +94,18 @@ Driven by a planned manual deployment on an automotive **Around View Monitor (AV
 (Kotlin/Java/C/C++), with native line precision solved. The `🔄` *consolidation* half (digests,
 `why`, conventions) is unchanged — still code-complete and live-quality-pending.
 
+- **The distillation half lost to a flat summary — digests switched to single-pass.** An A/B of how
+  to build the architecture/module digest (`eval/RESULTS_distillation.md`) found the consolidation
+  **tree** (summary-of-summaries fold) **loses to one compression pass**: one-shot summary **1.58** vs
+  tree **1.08** (of 2) — the deep fold drops the specifics a single pass preserves. So
+  `get_architecture`/`get_module` now serve a cached **single-pass** digest from `<ns>:meta`
+  (`conventions::rebuild_architecture_digest`, built by `POST /code/architecture/rebuild`), with the
+  consolidation tree kept only as the fallback when no single-pass digest is cached.
+- **Embeddings can now route to a separate backend — `ENGRAM_EMBED_URL`.** It defaults to
+  `ENGRAM_GATEWAY_URL`, but set it (e.g. at a local bge-m3 Ollama) to send **embeddings** to one
+  backend while LLM/chat calls stay on the gateway — decoupling the embedder from the LLM, which used
+  to share one URL. Full guide: `docs/EMBEDDINGS.md`.
+
 ---
 
 ## Shipped
@@ -136,8 +148,8 @@ binary/oversized/lockfiles, bounded concurrency + retry, `.git/engram/last-sha`)
 `crates/engram-mcp`: hand-rolled JSON-RPC MCP server (`initialize` / `tools/list` / `tools/call`)
 over **stdio and HTTP** (`ENGRAM_MCP_HTTP=addr`). Exposes all 6 tools — `search_code`,
 `get_architecture`, `get_module(path)`, `why(query)`, `find_symbol(name)`, `get_conventions()` —
-backed by `POST /code/search`, `/code/architecture`, `/code/module`, `/query`, `/conventions/rebuild`,
-`GET /conventions`, and `POST /tree`.
+backed by `POST /code/search`, `/code/architecture`, `/code/architecture/rebuild`, `/code/module`,
+`/query`, `/conventions/rebuild`, `GET /conventions`, and `POST /tree`.
 
 ### Phase E — Validation on `../agentmemory` ✅
 `eval/agentmemory_gold.json` (now 35 labeled NL→file queries, ≤ 2/file + a hard-negatives bucket) +
@@ -170,12 +182,17 @@ Result: **recall@5 0.800 (PASS), ingest 0.998 (PASS)**, line-recall@10 0.714, ha
   itself was always unaffected (loopback bind).
 
 ### Phase 2 — Architecture digests 🔄 (code-complete; live digest quality pending)
-Code-tuned consolidation: `process_doc` fans code leaves into a directory-keyed **module** tree and
-the **global** tree + topic trees on `sym:`/`import:`; MCP tools `get_architecture` (global digest)
-and `get_module(path)` (a directory's digest) are wired over `POST /code/architecture` and
-`/code/module`. Gated behind `ENGRAM_CONSOLIDATE_CODE` (off by default).
-Live bar (pending a consolidation run): every top-level source dir has a *non-fallback* `module`
-digest; `global` names the subsystems.
+The digest path is now **single-pass**, not the consolidation tree. `get_architecture` (global digest)
+and `get_module(path)` (a directory's digest) serve a cached single-pass digest from `<ns>:meta`
+(key `architecture` or `module:<dir>`), built by `POST /code/architecture/rebuild` →
+`conventions::rebuild_architecture_digest` — **one** LLM summary over the repo's whole source files,
+with extractive overflow. The code-tuned consolidation tree (`process_doc` fanning leaves into a
+directory-keyed **module** tree + the **global** tree + `sym:`/`import:` topic trees, gated behind
+`ENGRAM_CONSOLIDATE_CODE`, off by default) is now only the **fallback** when no single-pass digest is
+cached. Why: one compression pass keeps the specifics a deep summary-of-summaries fold loses —
+measured one-shot 1.58 vs tree 1.08 (of 2); see `eval/RESULTS_distillation.md`.
+Live bar (pending a rebuild run): every top-level source dir has a *non-fallback* `module` digest;
+`global` names the subsystems.
 
 ### Phase 3a — History / rationale 🔄 (code-complete; `why` ≥ 0.7 pending)
 `engram-index index-history` ingests git commits as docs into `repo:<id>:history`
