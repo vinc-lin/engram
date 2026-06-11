@@ -38,6 +38,10 @@ pub fn app(state: AppState) -> Router {
         .route("/v1/:namespace/recall", get(recall_docs))
         .route("/v1/:namespace/tree", post(tree_query))
         .route("/v1/:namespace/code/architecture", post(get_architecture))
+        .route(
+            "/v1/:namespace/code/architecture/rebuild",
+            post(rebuild_architecture_handler),
+        )
         .route("/v1/:namespace/code/module", post(get_module))
         .route(
             "/v1/:namespace/conventions/rebuild",
@@ -234,26 +238,33 @@ struct ArchReq {
     limit: Option<usize>,
 }
 
-/// Phase 2: the repo architecture digest — the top of the `global` summary tree. A query is
-/// optional; without one it returns the top digests in tree order (no embed/gateway round-trip).
+/// The repo architecture digest. Serves the cached **single-pass** digest from `<ns>:meta` (key
+/// `architecture`, built by `POST .../architecture/rebuild`) when present — the digest path no
+/// longer relies on the consolidation-tree fold. Falls back to a `global`-tree drill only when no
+/// single-pass digest has been built (backward compatibility).
 async fn get_architecture(
     State(state): State<AppState>,
     Path(namespace): Path<String>,
     Json(req): Json<ArchReq>,
 ) -> Response {
-    let result = tokio::task::spawn_blocking(move || {
-        retrieve::drill_down(
-            &state.store,
-            state.embedder.as_ref(),
-            &namespace,
-            req.query.as_deref().unwrap_or(""),
-            Some("global"),
-            Some("global"),
-            req.depth.unwrap_or(3),
-            req.limit.unwrap_or(10),
-        )
-    })
-    .await;
+    let result =
+        tokio::task::spawn_blocking(move || -> crate::error::Result<Vec<retrieve::TreeHit>> {
+            let meta_ns = crate::conventions::meta_namespace(&namespace);
+            if let Some(doc) = state.store.get_by_key(&meta_ns, "architecture")? {
+                return Ok(vec![retrieve::digest_hit(doc, "architecture".to_string())]);
+            }
+            retrieve::drill_down(
+                &state.store,
+                state.embedder.as_ref(),
+                &namespace,
+                req.query.as_deref().unwrap_or(""),
+                Some("global"),
+                Some("global"),
+                req.depth.unwrap_or(3),
+                req.limit.unwrap_or(10),
+            )
+        })
+        .await;
     match result {
         Ok(Ok(hits)) => Json(hits).into_response(),
         Ok(Err(e)) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
@@ -269,27 +280,68 @@ struct ModuleReq {
     limit: Option<usize>,
 }
 
-/// Phase 2: one directory's digest — `path` is the module key (a repo-relative directory).
+/// One directory's digest — `path` is the module key (a repo-relative directory). Serves the cached
+/// single-pass digest from `<ns>:meta` (key `module:<path>`) when present, else falls back to a
+/// `module`-tree drill.
 async fn get_module(
     State(state): State<AppState>,
     Path(namespace): Path<String>,
     Json(req): Json<ModuleReq>,
 ) -> Response {
+    let result =
+        tokio::task::spawn_blocking(move || -> crate::error::Result<Vec<retrieve::TreeHit>> {
+            let meta_ns = crate::conventions::meta_namespace(&namespace);
+            let key = format!("module:{}", req.path.trim_end_matches('/'));
+            if let Some(doc) = state.store.get_by_key(&meta_ns, &key)? {
+                return Ok(vec![retrieve::digest_hit(doc, key)]);
+            }
+            retrieve::drill_down(
+                &state.store,
+                state.embedder.as_ref(),
+                &namespace,
+                req.query.as_deref().unwrap_or(""),
+                Some("module"),
+                Some(&req.path),
+                req.depth.unwrap_or(3),
+                req.limit.unwrap_or(10),
+            )
+        })
+        .await;
+    match result {
+        Ok(Ok(hits)) => Json(hits).into_response(),
+        Ok(Err(e)) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct DigestRebuildReq {
+    /// `None` = whole-repo architecture digest; `Some(dir)` = a module digest scoped to a directory.
+    module: Option<String>,
+    max_tokens: Option<usize>,
+}
+
+/// Build the **single-pass** architecture digest (whole-repo, or a module when `module` is set) and
+/// cache it at `<ns>:meta` (LLM, off the runtime). This is the digest path's replacement for the
+/// consolidation-tree fold — see `eval/RESULTS_distillation.md`.
+async fn rebuild_architecture_handler(
+    State(state): State<AppState>,
+    Path(namespace): Path<String>,
+    Json(req): Json<DigestRebuildReq>,
+) -> Response {
     let result = tokio::task::spawn_blocking(move || {
-        retrieve::drill_down(
+        crate::conventions::rebuild_architecture_digest(
             &state.store,
+            state.chat.as_ref(),
             state.embedder.as_ref(),
             &namespace,
-            req.query.as_deref().unwrap_or(""),
-            Some("module"),
-            Some(&req.path),
-            req.depth.unwrap_or(3),
-            req.limit.unwrap_or(10),
+            req.module.as_deref(),
+            req.max_tokens.unwrap_or(2000),
         )
     })
     .await;
     match result {
-        Ok(Ok(hits)) => Json(hits).into_response(),
+        Ok(Ok(doc)) => Json(doc).into_response(),
         Ok(Err(e)) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }

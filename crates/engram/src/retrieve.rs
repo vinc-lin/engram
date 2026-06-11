@@ -29,6 +29,22 @@ pub struct TreeHit {
     pub score: f64,
 }
 
+/// Wrap a cached single-pass digest doc as a `TreeHit`, so `get_architecture`/`get_module` can serve
+/// it in the same shape as a tree drill. `tree_kind` = "digest" marks it a single-pass digest (the
+/// replacement for a folded tree node).
+pub fn digest_hit(doc: MemoryDoc, key: String) -> TreeHit {
+    TreeHit {
+        node_id: doc.document_id.clone(),
+        tree_kind: "digest".to_string(),
+        tree_key: key.clone(),
+        level: 0,
+        label: Some(key),
+        body: doc.content,
+        doc_id: Some(doc.document_id),
+        score: 1.0,
+    }
+}
+
 /// A chunk-level code search result: the matching chunk's file path, line range, and snippet.
 #[derive(Debug, Serialize)]
 pub struct CodeHit {

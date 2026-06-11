@@ -163,13 +163,20 @@ consolidated, keeps the latest leaf per `doc_id`, and cosine-reranks against the
 ### API surface & MCP tools (`api.rs` + `engram-mcp`)
 HTTP endpoints (all under `/v1/:namespace`, Bearer-auth; plus `GET /healthz`): `GET|POST /docs`,
 `GET /docs/:id`, `DELETE /docs/by-key/:key`, `POST /query`, `POST /code/search`, `GET /recall`,
-`POST /tree`, `POST /code/architecture`, `POST /code/module`, `GET /conventions`,
-`POST /conventions/rebuild`.
+`POST /tree`, `POST /code/architecture`, `POST /code/architecture/rebuild`, `POST /code/module`,
+`GET /conventions`, `POST /conventions/rebuild`.
+
+**Digest path is single-pass, not the tree.** `get_architecture`/`get_module` serve a cached
+**single-pass** digest from `<ns>:meta` (key `architecture` / `module:<dir>`), built by
+`POST /code/architecture/rebuild` → `conventions::rebuild_architecture_digest` (one LLM summary over
+the repo's source files; the consolidation-tree drill is only a fallback when no digest is cached).
+A single compression pass preserves specifics that the deep summary-of-summaries fold loses —
+measured: one-shot 1.58 vs tree 1.08 of 2, see `eval/RESULTS_distillation.md`.
 
 `engram-mcp` exposes **6 tools** over stdio (and HTTP JSON-RPC when `ENGRAM_MCP_HTTP` is set),
-each backed by an endpoint above: `search_code`, `get_architecture` (global digest),
-`get_module(path)` (a directory's digest), `why(query)` (git-history commits, via `:history`),
-`find_symbol(name)`, `get_conventions()` (the `:meta` digest).
+each backed by an endpoint above: `search_code`, `get_architecture` (global single-pass digest),
+`get_module(path)` (a directory's single-pass digest), `why(query)` (git-history commits, via
+`:history`), `find_symbol(name)`, `get_conventions()` (the `:meta` digest).
 
 ### Job queue semantics (`store/jobs.rs` + `jobs.rs`)
 `job_id` = `"{namespace}:{document_id}"`, so re-ingesting a doc idempotently re-enqueues (the
