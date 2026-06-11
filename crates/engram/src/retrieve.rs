@@ -174,6 +174,19 @@ fn keyword_overlap(query: &str, text: &str) -> f64 {
     hits as f64 / terms.len() as f64
 }
 
+/// Distinct lowercase query tokens (length >= 3) for IDF-weighted keyword scoring.
+fn query_terms(query: &str) -> Vec<String> {
+    let lower = query.to_lowercase();
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for t in lower.split(|c: char| !c.is_alphanumeric()) {
+        if t.len() >= 3 && seen.insert(t.to_string()) {
+            out.push(t.to_string());
+        }
+    }
+    out
+}
+
 /// Hybrid search: vector cosine + keyword overlap + graph entity signal, blended, top-`limit`.
 /// When the query contains entities that match stored docs, graph weights (OH §3.1) apply;
 /// otherwise falls back to vector+keyword only.
@@ -288,11 +301,48 @@ pub fn search_code(
     let candidates = store.code_chunks_for_namespace(namespace, &sig)?;
 
     let use_prior = crate::config::code_path_prior();
+    // IDF over the candidate chunks: rare query terms (base64, jieba, CompressedObservation) weigh
+    // more than common ones (how/the), so the specific file outranks a broad "hub" file that only
+    // matches loosely. Query-time re-rank — no re-index needed.
+    let use_idf = crate::config::code_keyword_idf();
+    let q_terms = query_terms(query_text);
+    let (idf, idf_total) = if use_idf && !q_terms.is_empty() {
+        let n = candidates.len() as f64;
+        let mut df: HashMap<String, usize> = q_terms.iter().map(|t| (t.clone(), 0usize)).collect();
+        for c in &candidates {
+            let low = c.text.to_lowercase();
+            for t in &q_terms {
+                if low.contains(t.as_str()) {
+                    *df.get_mut(t).unwrap() += 1;
+                }
+            }
+        }
+        let idf: HashMap<String, f64> = df
+            .into_iter()
+            .map(|(t, d)| (t, ((n + 1.0) / (d as f64 + 1.0)).ln()))
+            .collect();
+        let total: f64 = idf.values().sum();
+        (idf, total)
+    } else {
+        (HashMap::new(), 0.0)
+    };
+    let idf_on = use_idf && idf_total > 1e-6;
+
     let mut hits: Vec<CodeHit> = candidates
         .into_iter()
         .map(|c| {
             let v = cosine(&qv, &c.embedding);
-            let k = keyword_overlap(query_text, &c.text);
+            let k = if idf_on {
+                let low = c.text.to_lowercase();
+                let num: f64 = q_terms
+                    .iter()
+                    .filter(|t| low.contains(t.as_str()))
+                    .map(|t| idf.get(t).copied().unwrap_or(0.0))
+                    .sum();
+                num / idf_total
+            } else {
+                keyword_overlap(query_text, &c.text)
+            };
             let prior = if use_prior { path_prior(&c.key) } else { 1.0 };
             let score = (VEC_W_FALLBACK * v + KW_W_FALLBACK * k) * prior;
             CodeHit {
@@ -366,6 +416,15 @@ mod tests {
     use super::*;
     use crate::embed::HashEmbedder;
     use crate::model::NewDoc;
+
+    #[test]
+    fn query_terms_keeps_distinct_specific_tokens() {
+        let t = query_terms("How are vectors serialized to base64 to base64?");
+        assert!(t.contains(&"base64".to_string()));
+        assert!(t.contains(&"vectors".to_string()));
+        assert_eq!(t.iter().filter(|x| *x == "base64").count(), 1); // deduped
+        assert!(!t.contains(&"to".to_string())); // 2-char tokens dropped
+    }
 
     fn seed() -> (Store, HashEmbedder, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();

@@ -205,6 +205,26 @@ pub fn code_min_score() -> f64 {
     })
 }
 
+/// Whether `search_code` weights keyword overlap by inverse document frequency over the candidate
+/// chunks (rare, specific query terms — `base64`, `jieba`, `CompressedObservation` — dominate
+/// ranking; common words like `how`/`the` get ~0 weight). Cached read of `ENGRAM_CODE_KEYWORD_IDF`
+/// (default true). Targets recall@1: it re-ranks the specific file above broad "hub" files that win
+/// on a loose semantic match (see `eval/RESULTS.md`).
+pub fn code_keyword_idf() -> bool {
+    use std::sync::OnceLock;
+    static CACHE: OnceLock<bool> = OnceLock::new();
+    *CACHE.get_or_init(|| {
+        std::env::var("ENGRAM_CODE_KEYWORD_IDF")
+            .ok()
+            .and_then(|s| match s.to_ascii_lowercase().as_str() {
+                "true" | "1" | "yes" | "on" => Some(true),
+                "false" | "0" | "no" | "off" => Some(false),
+                _ => None,
+            })
+            .unwrap_or(true)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

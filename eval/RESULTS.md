@@ -154,3 +154,31 @@ Ops: the re-index took ~21 min and 70 large multilingual `READMEs/*.md`/`CHANGEL
 slower to ingest synchronously; the embedder fallback only catches gateway-side embed errors, not a
 client timeout). All gold (source) files re-chunked fine; ingest 0.998 holds (upsert kept prior
 `.md` versions). Lever: raise the engram-index POST timeout / cap per-file chunk concurrency.
+
+## IDF-weighted keyword re-ranking (2026-06-11) — recall@1 0.457 → 0.657
+
+A failure analysis of the live retrieval (baseline below, embedder held constant) found the dominant
+miss mode was **ranking, not coverage**: recall@5 0.829 but recall@1 only 0.457 — in ~37% of queries
+the gold file sat in the top-5 but a broad "hub" file (`search.ts` ×4, `index.ts` ×2, `types.ts`)
+won #1 on a loose semantic match. Almost every miss carried a *rare, specific* term (`base64`,
+`jieba`, `cosine`, `jaccard`, `debounced`, `CompressedObservation`, `decay`) that uniquely identifies
+the answer — but `search_code`'s keyword score was plain term-overlap, weighting `base64` the same as
+`how`. So rare terms were drowned out.
+
+**Fix (`ENGRAM_CODE_KEYWORD_IDF`, default on):** weight keyword overlap by inverse document frequency
+over the candidate chunks — rare query terms dominate, common words (`how`/`the`) get ~0 weight. It's
+a query-time re-rank (no re-index). A/B on the 35-query gold (bge-m3 substrate, IDF off vs on):
+
+| metric | baseline (no IDF) | **IDF on** | Δ |
+|--------|------|------|------|
+| recall@1 | 0.457 | **0.657** | **+0.200** |
+| recall@5 | 0.829 | **0.857** | +0.028 |
+| recall@10 | 0.886 | 0.857 | −0.029 |
+| line-recall@1 | 0.314 | **0.457** | **+0.143** |
+| line-recall@5 | 0.657 | **0.743** | +0.086 |
+| line-recall@10 | 0.771 | **0.829** | +0.058 |
+
+**+7 queries (16 → 23 of 35) now rank the gold file #1.** The only cost is one borderline query off the
+tail (recall@10 −0.029). The lever is embedder-independent (it re-weights keyword, not the vector);
+measured here on bge-m3 — a mxbai re-confirm on the production embedder is a cheap follow-up. This is
+the recall@5/ranking lever the earlier results filed under deferred enhancements, now landed.
