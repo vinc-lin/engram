@@ -9,6 +9,10 @@ pub struct Config {
     pub embed_timeout_secs: u64,
     // Plan 4
     pub gateway_url: String,
+    /// Embeddings endpoint. Defaults to `gateway_url`; set `ENGRAM_EMBED_URL` to send embeddings to a
+    /// different backend (e.g. a local Ollama) while LLM/chat calls stay on `gateway_url`. Decouples
+    /// the embedder from the LLM, which otherwise share one URL.
+    pub embed_url: String,
     pub gateway_key: String,
     pub llm_model: String,
     pub llm_provider: String,
@@ -49,6 +53,9 @@ impl Config {
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(30),
             gateway_url: get("ENGRAM_GATEWAY_URL")
+                .unwrap_or_else(|| "http://127.0.0.1:4000".into()),
+            embed_url: get("ENGRAM_EMBED_URL")
+                .or_else(|| get("ENGRAM_GATEWAY_URL"))
                 .unwrap_or_else(|| "http://127.0.0.1:4000".into()),
             gateway_key: get("ENGRAM_GATEWAY_KEY").unwrap_or_default(),
             llm_model: get("ENGRAM_LLM_MODEL").unwrap_or_else(|| "qwen3".into()),
@@ -230,6 +237,7 @@ mod tests {
     fn plan4_defaults_and_overrides() {
         let c = Config::from_vars(|_| None);
         assert_eq!(c.gateway_url, "http://127.0.0.1:4000");
+        assert_eq!(c.embed_url, "http://127.0.0.1:4000"); // defaults to gateway_url
         assert_eq!(c.llm_model, "qwen3");
         assert_eq!(c.llm_provider, "ollama");
         assert_eq!(c.audit_url, "http://127.0.0.1:8383");
@@ -245,12 +253,15 @@ mod tests {
 
         let c2 = Config::from_vars(|k| match k {
             "ENGRAM_LLM_MODEL" => Some("deepseek-chat".into()),
+            "ENGRAM_EMBED_URL" => Some("http://127.0.0.1:11434".into()),
             "ENGRAM_SEAL_FANOUT" => Some("3".into()),
             "ENGRAM_VAULT_DIR" => Some("/tmp/v".into()),
             "ENGRAM_CONSOLIDATE_CODE" => Some("true".into()),
             _ => None,
         });
         assert_eq!(c2.llm_model, "deepseek-chat");
+        assert_eq!(c2.embed_url, "http://127.0.0.1:11434"); // decoupled from gateway_url
+        assert_eq!(c2.gateway_url, "http://127.0.0.1:4000"); // LLM URL stays default
         assert_eq!(c2.seal_fanout, 3);
         assert_eq!(c2.vault_dir.as_deref(), Some("/tmp/v"));
         assert!(c2.consolidate_code);

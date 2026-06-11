@@ -20,7 +20,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // fallback serves the same model/dim and the wrapper keeps the primary's signature(), so a
     // failover never orphans chunks.
     let primary: Arc<dyn Embedder> = Arc::new(engram::embed::GatewayEmbedder::new(
-        cfg.gateway_url.clone(),
+        cfg.embed_url.clone(),
         cfg.gateway_key.clone(),
         cfg.embed_model.clone(),
         cfg.embed_dim,

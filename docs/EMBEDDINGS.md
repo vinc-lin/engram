@@ -42,11 +42,12 @@ Embedder code lives in `crates/engram/src/embed.rs`: the `Embedder` trait + `Has
 ## Serving topology & the two gotchas
 
 ```
-                 ENGRAM_GATEWAY_URL ─────────────► litellm gateway ──► mxbai  ✅ 200
-                  (embedder + LLM,                                  └─► bge-m3 ❌ 500 (dead route)
-                   one URL for both)              deepseek-chat ✅ (the consolidation/LLM model)
+   ENGRAM_GATEWAY_URL (LLM/chat) ──────────────► litellm gateway ──► mxbai  ✅ 200
+                                                                   ├─► bge-m3 ❌ 500 (dead route)
+                                                                   └─► deepseek-chat ✅ (LLM model)
 
-   ENGRAM_OLLAMA_URL (fallback only) ───────────► local WSL Ollama :11434 ──► bge-m3 ✅ (GPU)
+   ENGRAM_EMBED_URL (embeddings; defaults to ───► local WSL Ollama :11434 ──► bge-m3 ✅ (GPU)
+     gateway_url, override to decouple)            [embeddings only — LLM stays on the gateway]
 ```
 
 1. **The gateway's `bge-m3` route is broken.** `POST {gateway}/v1/embeddings` with `mxbai-embed-large`
@@ -54,12 +55,11 @@ Embedder code lives in `crates/engram/src/embed.rs`: the `Embedder` trait + `Has
    The *working* bge-m3 is the **local** one — start it with `~/start-ollama-wsl.sh` (Linux Ollama on
    the GPU, serving `/v1/embeddings`). See `eval/RESULTS_android.md` for the setup story.
 
-2. **engram couples the embedder and the LLM to one `ENGRAM_GATEWAY_URL`.** `GatewayEmbedder` and
-   `GatewayChatClient` both post to it. You **cannot** point embeddings at the local Ollama while
-   keeping the LLM (deepseek) on the gateway in a single instance — except via the fallback path
-   (below), which pays the gateway's failure/retry latency on every embed before falling local. If you
-   want fully-local embeddings *and* a real LLM, run a local chat model too and point the whole URL at
-   `127.0.0.1:11434`.
+2. **Embedder and LLM can use separate endpoints — `ENGRAM_EMBED_URL`.** By default both ride
+   `ENGRAM_GATEWAY_URL`. Set `ENGRAM_EMBED_URL` to send embeddings to a different backend — e.g. the
+   local bge-m3 Ollama — while chat/LLM calls (consolidation summaries, audits) stay on the gateway
+   (deepseek). This is the clean way to pair **reliable local embeddings** with a **real gateway LLM**,
+   and it replaces the old fallback hack (which paid the gateway's 500-retry latency on every embed).
 
 3. **Concurrent workers can overload the gateway embed endpoint** → transient 500s. The cold-path
    consolidation embeds run on `ENGRAM_JOBS_WORKERS` threads; several in parallel can burst the gateway
@@ -84,6 +84,7 @@ line-recall; only bge-m3 + wide did.)
 | `ENGRAM_EMBED_TIMEOUT_SECS` | `30` | Per-request embed HTTP timeout. |
 | `ENGRAM_EMBED_FALLBACK` | `false` | Wrap `GatewayEmbedder` with a local `OllamaEmbedder` failover. |
 | `ENGRAM_OLLAMA_URL` | `http://127.0.0.1:11434` | Fallback (or primary, if URL points here) Ollama endpoint. |
+| `ENGRAM_EMBED_URL` | = `ENGRAM_GATEWAY_URL` | Embeddings endpoint, **decoupled** from the LLM URL. Point at a local Ollama for reliable embeds while the LLM stays on the gateway. |
 | `ENGRAM_CODE_NATIVE_PACK` | `false` | Pack consecutive C/C++ defs into wider boundary-aligned chunks. |
 | `ENGRAM_CODE_NATIVE_BUDGET` | `480` | Token budget for native packing. Raise to ~1500 with a long-context embedder. |
 
@@ -95,10 +96,10 @@ Changing the model/dim ⇒ re-index. The native-pack knobs only help with a long
 - **Production / prose / mixed code:** `mxbai-embed-large` dim 1024 via the gateway. Leave native-pack
   off. This is the deploy default and the only gateway embed route that works.
 - **Native-heavy repo (AOSP/AVM C/C++):** serve bge-m3 locally (`~/start-ollama-wsl.sh`), set
-  `ENGRAM_GATEWAY_URL=http://127.0.0.1:11434` (embeddings local), `ENGRAM_EMBED_MODEL=bge-m3`,
-  `ENGRAM_EMBED_DIM=1024`, `ENGRAM_CODE_NATIVE_PACK=true`, `ENGRAM_CODE_NATIVE_BUDGET=1500`, full
-  re-index under `gateway:bge-m3:1024`. Note: this also routes the LLM at the same URL — run a local
-  chat model or accept fallback summaries for any consolidation.
+  `ENGRAM_EMBED_URL=http://127.0.0.1:11434` (embeddings local) while `ENGRAM_GATEWAY_URL` keeps the LLM
+  on the gateway, plus `ENGRAM_EMBED_MODEL=bge-m3`, `ENGRAM_EMBED_DIM=1024`,
+  `ENGRAM_CODE_NATIVE_PACK=true`, `ENGRAM_CODE_NATIVE_BUDGET=1500`; full re-index under
+  `gateway:bge-m3:1024`.
 - **Gateway embed 500 storm:** drop `ENGRAM_JOBS_WORKERS` to 1; embeds serialize and stop overloading.
 - **Never** mix signatures in one namespace — a half-migrated namespace silently returns zero recall
   for the orphaned half.
