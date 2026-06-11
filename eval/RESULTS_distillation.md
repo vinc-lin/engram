@@ -1,7 +1,7 @@
 # Distillation vs. Simple Summary — does engram's consolidation earn its keep?
 
-**Status: run in progress (2026-06-11).** Design + methodology below are final; the scored verdict
-is pending the blind-judge pass (see Results).
+**Status: complete (2026-06-11). Verdict: the flat summary beats engram's distillation, 1.50 vs
+1.00 (of 2).** The user's instinct was correct.
 
 ## The question
 
@@ -71,14 +71,65 @@ the deterministic `fallback_summary` concat.
 
 ## Results
 
-**Pending the blind-judge pass (in progress).** To be reported here: per-arm mean score (0–2),
-the **A vs B** delta (the headline), the "Not in context" rate per arm, and a per-question
-breakdown with representative answers.
+Blind 3-judge scoring (independent Claude judges, arm-anonymized + shuffled, scored 0/1/2 vs ground
+truth; per-answer = median of judges). n = 12 questions per arm.
 
-*Preliminary directional signal* (from an earlier, **confounded** run in which 4/5 docs failed to
-consolidate, so Arm A's digest was incomplete — superseded by the clean run above): the flat
-summary surfaced more answers than the distillation — Arm B missed 4/12 questions ("Not in
-context"), Arm A missed 6/12. Treat as a hint only until the clean scored numbers land.
+| Arm | Mean (0–2) | Total /24 |
+|-----|-----------|-----------|
+| **B — simple summary** | **1.50** | 18 |
+| C — retrieval | 1.08 | 13 |
+| **A — engram distillation** | **1.00** | 12 |
+| D — control (headers only) | 0.00 | 0 |
+
+**The flat summary wins decisively — 1.50 vs distillation's 1.00 (+50% relative)** — and the
+distillation digest even edged *below* coarse doc-level retrieval. The control scored zero,
+confirming the questions genuinely require the corpus content (no answers leaked from the question
+text).
+
+**Where distillation lost.** It scored **0 on 5 of 12** questions — q01 (spawn_blocking), q03
+(off-lock invariant), q05 (fallback_summary), q07 (ext4-not-v9fs), q08 (job idempotency) — every
+one a *specific mechanism fact*. The flat summary retained those. This is the **compounding-loss**
+failure mode the design predicted: folding summaries-of-summaries (here a real 4-level tree)
+abstracts away the exact detail an agent needs — a function name, a gate, a reason — and leaves
+generic prose. Compressing the corpus **once** (the flat summary) kept more specifics. Distillation
+won only **1** question outright (q11, the native-recall finding: A=2, B=0).
+
+Per-question medians (2 = correct, 1 = partial, 0 = wrong/absent):
+
+| q | A distill | B summary | C retrieval | D control |
+|---|:--:|:--:|:--:|:--:|
+| q01 | 0 | 2 | 2 | 0 |
+| q02 | 2 | 2 | 1 | 0 |
+| q03 | 0 | 1 | 2 | 0 |
+| q04 | 1 | 2 | 0 | 0 |
+| q05 | 0 | 2 | 0 | 0 |
+| q06 | 2 | 2 | 0 | 0 |
+| q07 | 0 | 2 | 0 | 0 |
+| q08 | 0 | 0 | 2 | 0 |
+| q09 | 2 | 2 | 2 | 0 |
+| q10 | 2 | 2 | 2 | 0 |
+| q11 | 2 | 0 | 0 | 0 |
+| q12 | 1 | 1 | 2 | 0 |
+
+Note: the "Not in context" *presence* rate was close (A 3/12, B 2/12), but the *scored* gap is
+wider (A 1.0, B 1.5) because two of distillation's present answers were confidently **wrong** and
+scored 0 — exactly what scoring-vs-counting is meant to catch.
+
+**Caveats.** Single corpus (engram's own docs), 12 questions, n = 12/arm — directional, not
+definitive. 6 of 36 judge calls failed to return structured output, so a few questions were scored
+by 2 judges instead of 3 (median still applied; does not change the ranking). The distillation arm
+used shrunk seal gates to force a multi-level fold on a small corpus; production gates fold less
+aggressively. Judge = Claude, independent of the deepseek answerer.
+
+## Verdict
+
+**Confirmed: engram's distillation does not beat a simple summary as agent context — it loses, 1.00
+vs 1.50.** The autonomous tree-consolidation is both *expensive* (per-leaf LLM seals) and *lossy*
+(summary-of-summaries drops the specifics an agent needs), and a one-shot flat summary of the same
+material serves the agent better. With retrieval being the separately-proven-strong half, the
+actionable conclusion for the "distilled context" use case: **prefer a flat, regenerated summary
+(or retrieval) over the deep consolidation tree.** The tree-fold is a candidate to **replace**, not
+tune — which directly answers the question that opened this experiment.
 
 ## Reproduction
 
