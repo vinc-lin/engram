@@ -213,4 +213,9 @@ Four follow-up levers, each a measured A/B (bge-m3 substrate, IDF on):
 | line-recall@5 | 0.657 | **0.771** | +0.114 |
 | line-recall@10 | 0.771 | **0.857** | +0.086 |
 
-mxbai (production embedder) re-confirm: pending a gateway re-index.
+**mxbai re-confirm (production embedder) — confirmed; it flips the published baseline FAIL→PASS.**
+Re-indexed agentmemory under gateway mxbai (the ORIGINAL arm reproduces the published baseline
+exactly: recall@1 0.543, recall@5 0.771, recall@10 0.914). The tuned config (IDF + kw 0.50) lifts it
+to recall@1 **0.714** (+0.171), recall@5 **0.857** — the headline bar was a **0.771 FAIL, now PASS** —
+line-recall@5 0.629→0.771, line-recall@10 0.771→0.857; same minor tail cost (recall@10 0.914→0.886).
+The IDF+weight lever is embedder-independent and now validated on both bge-m3 and mxbai.
