@@ -235,6 +235,10 @@ cold pipeline deterministically with `while worker_tick(...) {}`.
 
 ## Testing conventions
 
+**Running engram on another machine / model:** `docs/TESTING.md` is the portable guide (offline
+`cargo test`, configuring an arbitrary embed/LLM backend, the smoke test, and the `validate.py`
+quality loop).
+
 Tests are inline `#[cfg(test)] mod tests` in each module (across all three crates) — there is no
 `tests/` dir; ~179 tests total, clippy + fmt clean. They build an ephemeral DB via
 `tempfile::tempdir()` + `Store::open`, and use **`HashEmbedder`** (a deterministic, network-free
