@@ -219,3 +219,23 @@ exactly: recall@1 0.543, recall@5 0.771, recall@10 0.914). The tuned config (IDF
 to recall@1 **0.714** (+0.171), recall@5 **0.857** — the headline bar was a **0.771 FAIL, now PASS** —
 line-recall@5 0.629→0.771, line-recall@10 0.771→0.857; same minor tail cost (recall@10 0.914→0.886).
 The IDF+weight lever is embedder-independent and now validated on both bge-m3 and mxbai.
+
+### Type-aware chunking for the `types.ts` burial (2026-06-11) — tested, REJECTED & reverted
+
+Hypothesis: the `src/types.ts` burial (its enums + `CompressedObservation` never surface) is a
+*chunking* problem — a pure-`export interface/type` file finds no chunk boundaries (the decls wrap
+in `export_statement`, which `is_boundary` didn't unwrap) and size-chunks into dense ~1500-char
+blobs. Fix tried: unwrap `export_statement` in `is_boundary` so each exported type is its own chunk.
+
+Result — mechanically correct, but a net loss:
+- `src/types.ts` went 15 size-chunks → **82 per-type chunks** (the split worked).
+- **The burial persisted**: both target queries still rank `types.ts` outside top-10 — a *usage*
+  file (`memory-utils.ts`) that references the type in NL-like prose still out-matches the bare
+  definition on the vector signal.
+- **Overall recall regressed**: recall@1 **0.686 → 0.600**, line-recall@1 0.486 → 0.343 — splitting
+  every export-wrapped decl fragments files into smaller, weaker-matching chunks. **Reverted.**
+
+Conclusion: the burial is a **definition-vs-usage ranking** problem, not a chunking-granularity one
+— finer chunks of a terse type def can't beat usage context on NL-vector match. The real lever is a
+*light* definition boost in ranking (modestly favour the file that *defines* a query-named symbol),
+distinct from the rejected 0.55-weight graph signal — a future measured A/B, not done here.
