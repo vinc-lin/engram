@@ -202,3 +202,27 @@ code (AOSP AVM); verify on the real language mix. libxcam (line-recall already 0
 - Qwen3.6 arm built + adapter-ready but not run (no gateway access yet).
 - Android builds not used as a success gate (footprint + path-set scoring instead).
 - Small proxies — the headline caveat on Lens 1's modest agent delta.
+
+## Ranking levers on native code (2026-06-12) — do the agentmemory wins transfer?
+
+The IDF / keyword-weight / definition-boost ranking wins (`eval/RESULTS.md`) were tuned on a
+TypeScript repo. Re-measured on the 3 native proxies (108 probes, bge-m3 + native-pack), A/B
+baseline (IDF off, kw 0.35, def-boost 0) vs tuned (IDF on, kw 0.50, def-boost 0.10), engram only:
+
+| repo | recall@1 | recall@5 | recall@10 | cpp recall@5 | verdict |
+|------|----------|----------|-----------|--------------|---------|
+| ndk-samples | .514→**.600** | .829→**.886** | .943→.943 | .885→**.923** | win |
+| gpuimage    | .514→**.686** | .800→**.971** | .886→**.971** | .800→**1.0** | big win |
+| libxcam     | .500→**.474** | .763→**.711** | .789→**.842** | .875→**.781** | **top-5 regresses** |
+
+**Net across 108 native probes: recall@1 0.509→0.584 (+0.075), recall@5 0.796→0.852 (+0.056).**
+
+So the ranking levers **transfer net-positive to native C/C++** — strongly on ndk-samples and
+gpuimage (gpuimage cpp@5 → 1.0). **But `libxcam` is a genuine exception**: the tuning *regresses*
+its recall@1/@5 and cpp@5 (0.875→0.781), while *improving* its recall@10 (+0.053), line-recall@10
+(.92→.96), and cross-layer coverage (.7→.9). libxcam is a large, homogeneous system-level camera
+framework — plausibly its gold answers lack the distinctive rare terms IDF rewards, and/or the
+definition boost lands on a wrong same-named C/C++ definer. **Validating on the proxies caught this;
+the TS-only eval did not.** Which single lever drives the libxcam regression is not yet isolated
+(a per-component A/B on libxcam is the next step) — until then, the tuning ships (net win on TS and
+native), with libxcam flagged as the case to watch.
