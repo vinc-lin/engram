@@ -239,3 +239,33 @@ Conclusion: the burial is a **definition-vs-usage ranking** problem, not a chunk
 — finer chunks of a terse type def can't beat usage context on NL-vector match. The real lever is a
 *light* definition boost in ranking (modestly favour the file that *defines* a query-named symbol),
 distinct from the rejected 0.55-weight graph signal — a future measured A/B, not done here.
+
+### Definition boost — the light lever that fixed the burial (2026-06-11)
+
+The type-aware-chunking rejection pointed at the right fix being in *ranking*, not chunking: favour
+the file that **defines** a query-named symbol. Implemented as `ENGRAM_CODE_DEF_BOOST` (default
+**0.10**): a small additive bonus to chunks whose doc holds `sym:<Name>` for a symbol the query
+names — gated to *specific* symbols (IDF ≥ 3.0 over chunk text, so `get`/`search` never fire) and
+capped, so unlike the rejected 0.55-weight graph signal it *nudges* rather than dominates.
+Query-time, no re-index.
+
+A gating fix mattered: the first gate (IDF ≥ 3.5) used text frequency and excluded
+`CompressedObservation` (df 157 → idf 3.27 — heavily *used*, though *defined* once). Loosening to
+IDF ≥ 3.0 let the defining file qualify.
+
+A/B (bge-m3, IDF + kw 0.50):
+
+| def_boost | recall@1 | recall@5 | recall@10 | `types.ts` (2 queries) |
+|-----------|:--:|:--:|:--:|:--|
+| 0.0  | 0.686 | 0.857 | 0.886 | neither retrieved |
+| **0.10** | 0.686 | **0.886** | **0.914** | `CompressedObservation` query → **#2** |
+| 0.20 | 0.686 | 0.857 | 0.914 | #2 (but over-boosts, loses a recall@5) |
+
+`def_boost=0.10` brings the `CompressedObservation` query's `src/types.ts` from outside top-10 to
+**#2**, lifting **recall@5 0.857→0.886 and recall@10 0.886→0.914** (recall@1 held; line-recall@5
+−0.028, one query). The other `types.ts` query names no exact symbol ("observation types", "memory
+type enum") and stays unretrieved — a real residual limit of symbol-matching (would need
+semantic/query expansion). **Default 0.10.**
+
+**Cumulative (IDF + kw 0.50 + def-boost 0.10) vs the original baseline:** recall@1 0.457 → 0.686,
+recall@5 0.829 → **0.886**, recall@10 0.886 → **0.914**, line-recall@1 0.314 → 0.486.

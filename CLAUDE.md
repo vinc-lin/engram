@@ -139,7 +139,9 @@ count); otherwise it falls back to vector 0.65 / keyword 0.35. Each `Hit` expose
 (`ENGRAM_CODE_KEYWORD_IDF`, default on — rare query terms dominate ranking) at weight
 `ENGRAM_CODE_KW_WEIGHT` (0.50), plus a **path-type ranking prior** (gated by
 `ENGRAM_CODE_PATH_PRIOR`) that down-weights docs/tests/config/LICENSE so source
-ranks first. It returns `path:line` + a code snippet. It reads **chunks, not trees** — so code
+ranks first, and a small **definition boost** (`ENGRAM_CODE_DEF_BOOST`, 0.10) that favours the file
+*defining* a rare symbol the query names (`sym:<Name>`, IDF-gated) — fixes the definition-vs-usage
+burial (recall@5 0.857→0.886). It returns `path:line` + a code snippet. It reads **chunks, not trees** — so code
 consolidation is unread until the digest tools (`get_architecture`/`get_module`) are used. An
 optional abstention floor (`ENGRAM_CODE_MIN_SCORE`, default off) drops hits below a score so
 absent-topic queries return nothing instead of a confident-but-wrong hit.
@@ -218,7 +220,8 @@ cold pipeline deterministically with `while worker_tick(...) {}`.
   (true), `ENGRAM_CODE_TREE_SITTER` (true), `ENGRAM_CODE_MIN_SCORE` (0.0 = off; search_code
   abstention floor), `ENGRAM_CODE_NATIVE_PACK` (false), `ENGRAM_CODE_NATIVE_BUDGET` (480),
   `ENGRAM_CODE_KEYWORD_IDF` (true; IDF keyword re-rank), `ENGRAM_CODE_KW_WEIGHT` (0.50; keyword blend
-  weight), `ENGRAM_CODE_GRAPH` (false; `sym:`-graph signal — measured to *hurt* code recall, kept off),
+  weight), `ENGRAM_CODE_DEF_BOOST` (0.10; additive boost for the file defining a rare query symbol),
+  `ENGRAM_CODE_GRAPH` (false; `sym:`-graph signal — measured to *hurt* code recall, kept off),
   `ENGRAM_MCP_HTTP` (unset),
   `ENGRAM_INDEX_TIMEOUT_SECS` (120, read by `engram-index`, not the core
   `Config`). Plus the gateway/LLM ones:

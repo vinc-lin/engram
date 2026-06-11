@@ -239,6 +239,22 @@ pub fn code_kw_weight() -> f64 {
     })
 }
 
+/// Additive `search_code` boost for a chunk whose doc **defines** a *rare* symbol the query names
+/// (`sym:<Name>` with high IDF). Cached read of `ENGRAM_CODE_DEF_BOOST` (default 0.0 = off). A small
+/// capped bonus that favours the definition over usage files — unlike the 0.55-weight graph signal,
+/// it can't drown the vector. Targets the definition-vs-usage burial (e.g. `types.ts`).
+pub fn code_def_boost() -> f64 {
+    use std::sync::OnceLock;
+    static CACHE: OnceLock<f64> = OnceLock::new();
+    *CACHE.get_or_init(|| {
+        std::env::var("ENGRAM_CODE_DEF_BOOST")
+            .ok()
+            .and_then(|s| s.parse::<f64>().ok())
+            .filter(|v| v.is_finite() && (0.0..=1.0).contains(v))
+            .unwrap_or(0.10)
+    })
+}
+
 /// Whether `search_code` adds a `sym:`-graph signal — boosting chunks whose doc contains a symbol
 /// the query names. Cached read of `ENGRAM_CODE_GRAPH` (default false). Helps symbol-name queries.
 pub fn code_graph() -> bool {

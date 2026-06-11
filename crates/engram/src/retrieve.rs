@@ -330,9 +330,11 @@ pub fn search_code(
     // more than common ones (how/the), so the specific file outranks a broad "hub" file that only
     // matches loosely. Query-time re-rank — no re-index needed.
     let use_idf = crate::config::code_keyword_idf();
+    let def_boost = crate::config::code_def_boost();
     let q_terms = query_terms(query_text);
-    let (idf, idf_total) = if use_idf && !q_terms.is_empty() {
-        let n = candidates.len() as f64;
+    // Document frequency of each query term over the candidate chunks — drives both IDF keyword
+    // weighting and the rarity gate for the definition boost.
+    let df: HashMap<String, usize> = if (use_idf || def_boost > 0.0) && !q_terms.is_empty() {
         let mut df: HashMap<String, usize> = q_terms.iter().map(|t| (t.clone(), 0usize)).collect();
         for c in &candidates {
             let low = c.text.to_lowercase();
@@ -342,19 +344,20 @@ pub fn search_code(
                 }
             }
         }
-        let idf: HashMap<String, f64> = df
-            .into_iter()
-            .map(|(t, d)| (t, ((n + 1.0) / (d as f64 + 1.0)).ln()))
-            .collect();
-        let total: f64 = idf.values().sum();
-        (idf, total)
+        df
     } else {
-        (HashMap::new(), 0.0)
+        HashMap::new()
     };
+    let n = candidates.len() as f64;
+    let idf: HashMap<String, f64> = df
+        .iter()
+        .map(|(t, &d)| (t.clone(), ((n + 1.0) / (d as f64 + 1.0)).ln()))
+        .collect();
+    let idf_total: f64 = idf.values().sum();
     let idf_on = use_idf && idf_total > 1e-6;
-
-    // sym:-graph signal: boost chunks whose doc contains a symbol the query names (off by default).
     let kw_w = crate::config::code_kw_weight();
+
+    // sym:-graph signal (off by default — measured to hurt code recall; see eval/RESULTS.md).
     let (graph_counts, max_graph) = if crate::config::code_graph() {
         let q_ents = query_code_entities(query_text);
         let gc = store.docs_with_entities(namespace, &q_ents)?;
@@ -364,6 +367,34 @@ pub fn search_code(
         (HashMap::new(), 0.0)
     };
     let has_graph = max_graph > 0.0;
+
+    // Definition boost: a small additive bonus for chunks whose doc *defines* a RARE symbol the
+    // query names (`sym:<Name>` with high IDF) — favours the definition over usage files without the
+    // graph signal's noise. Gated to specific symbols so common names (get/search) never fire.
+    const RARE_IDF: f64 = 3.0;
+    let def_docs: std::collections::HashSet<String> = if def_boost > 0.0 {
+        let mut cands: Vec<String> = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for tok in query_text.split(|c: char| !(c.is_alphanumeric() || c == '_')) {
+            if tok.len() >= 3
+                && tok.chars().next().is_some_and(|c| c.is_alphabetic())
+                && idf.get(&tok.to_lowercase()).is_some_and(|&i| i >= RARE_IDF)
+                && seen.insert(tok.to_string())
+            {
+                cands.push(format!("sym:{tok}"));
+            }
+        }
+        if cands.is_empty() {
+            std::collections::HashSet::new()
+        } else {
+            store
+                .docs_with_entities(namespace, &cands)?
+                .into_keys()
+                .collect()
+        }
+    } else {
+        std::collections::HashSet::new()
+    };
 
     let mut hits: Vec<CodeHit> = candidates
         .into_iter()
@@ -391,7 +422,12 @@ pub fn search_code(
             } else {
                 (1.0 - kw_w) * v + kw_w * k
             };
-            let score = base * prior;
+            let score = base * prior
+                + if def_docs.contains(&c.document_id) {
+                    def_boost
+                } else {
+                    0.0
+                };
             CodeHit {
                 path: c.key,
                 document_id: c.document_id,
@@ -471,6 +507,14 @@ mod tests {
         assert!(t.contains(&"vectors".to_string()));
         assert_eq!(t.iter().filter(|x| *x == "base64").count(), 1); // deduped
         assert!(!t.contains(&"to".to_string())); // 2-char tokens dropped
+    }
+
+    #[test]
+    fn query_code_entities_preserve_case_and_drop_short() {
+        let e = query_code_entities("fields of a CompressedObservation record and snake_case_id");
+        assert!(e.contains(&"sym:CompressedObservation".to_string())); // case preserved
+        assert!(e.contains(&"sym:snake_case_id".to_string())); // underscores kept
+        assert!(!e.iter().any(|x| x == "sym:of")); // 2-char dropped
     }
 
     fn seed() -> (Store, HashEmbedder, tempfile::TempDir) {
