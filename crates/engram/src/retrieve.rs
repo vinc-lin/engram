@@ -187,6 +187,25 @@ fn query_terms(query: &str) -> Vec<String> {
     out
 }
 
+/// Candidate `sym:`/`import:` entity ids from a query's identifier-like tokens, for the graph
+/// signal. Real symbol mentions (`CompressedObservation`, `jieba`) match stored entities; common
+/// words don't (so they add no false boost).
+fn query_code_entities(query: &str) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for tok in query.split(|c: char| !(c.is_alphanumeric() || c == '_')) {
+        if tok.len() >= 3 && tok.chars().next().is_some_and(|c| c.is_alphabetic()) {
+            for pref in ["sym:", "import:"] {
+                let e = format!("{pref}{tok}");
+                if seen.insert(e.clone()) {
+                    out.push(e);
+                }
+            }
+        }
+    }
+    out
+}
+
 /// Hybrid search: vector cosine + keyword overlap + graph entity signal, blended, top-`limit`.
 /// When the query contains entities that match stored docs, graph weights (OH §3.1) apply;
 /// otherwise falls back to vector+keyword only.
@@ -258,6 +277,12 @@ fn path_prior(path: &str) -> f64 {
     let p = path.to_ascii_lowercase();
     let base = p.rsplit('/').next().unwrap_or(p.as_str());
     let ext = base.rsplit('.').next().unwrap_or("");
+    if base.starts_with("license")
+        || base.starts_with("copying")
+        || matches!(base, "notice" | "authors" | "patents" | "copyright")
+    {
+        return 0.4; // legal / meta files — never the answer to a code query
+    }
     if matches!(ext, "md" | "mdx" | "markdown" | "rst" | "txt") {
         return 0.5; // documentation / prose
     }
@@ -328,6 +353,18 @@ pub fn search_code(
     };
     let idf_on = use_idf && idf_total > 1e-6;
 
+    // sym:-graph signal: boost chunks whose doc contains a symbol the query names (off by default).
+    let kw_w = crate::config::code_kw_weight();
+    let (graph_counts, max_graph) = if crate::config::code_graph() {
+        let q_ents = query_code_entities(query_text);
+        let gc = store.docs_with_entities(namespace, &q_ents)?;
+        let mg = gc.values().copied().max().unwrap_or(0) as f64;
+        (gc, mg)
+    } else {
+        (HashMap::new(), 0.0)
+    };
+    let has_graph = max_graph > 0.0;
+
     let mut hits: Vec<CodeHit> = candidates
         .into_iter()
         .map(|c| {
@@ -344,7 +381,17 @@ pub fn search_code(
                 keyword_overlap(query_text, &c.text)
             };
             let prior = if use_prior { path_prior(&c.key) } else { 1.0 };
-            let score = (VEC_W_FALLBACK * v + KW_W_FALLBACK * k) * prior;
+            let g = if has_graph {
+                *graph_counts.get(&c.document_id).unwrap_or(&0) as f64 / max_graph
+            } else {
+                0.0
+            };
+            let base = if has_graph {
+                GRAPH_W * g + VEC_W_G * v + KW_W_G * k
+            } else {
+                (1.0 - kw_w) * v + kw_w * k
+            };
+            let score = base * prior;
             CodeHit {
                 path: c.key,
                 document_id: c.document_id,
@@ -632,6 +679,8 @@ mod tests {
         assert!(super::path_prior("src/foo.test.ts") < 1.0);
         assert!(super::path_prior(".env.example") < 1.0);
         assert!(super::path_prior("examples/demo.ts") < 1.0);
+        assert!(super::path_prior("LICENSE") < 1.0);
+        assert!(super::path_prior("packages/mcp/LICENSE") < 1.0);
     }
 
     #[test]

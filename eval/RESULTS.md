@@ -182,3 +182,35 @@ a query-time re-rank (no re-index). A/B on the 35-query gold (bge-m3 substrate, 
 tail (recall@10 −0.029). The lever is embedder-independent (it re-weights keyword, not the vector);
 measured here on bge-m3 — a mxbai re-confirm on the production embedder is a cheap follow-up. This is
 the recall@5/ranking lever the earlier results filed under deferred enhancements, now landed.
+
+### Ranking tuning campaign (2026-06-11) — recall@1 → 0.686
+
+Four follow-up levers, each a measured A/B (bge-m3 substrate, IDF on):
+
+- **Keyword weight (`ENGRAM_CODE_KW_WEIGHT`, lever 2) → default raised 0.35 → 0.50.** Now that
+  keyword is IDF-sharp it deserves more weight: recall@1 0.657 → **0.686**, and it *recovers* the IDF
+  tail regression (recall@10 0.857 → 0.886). 0.65 ties on recall but loses line-recall@5.
+- **`sym:`-graph signal (`ENGRAM_CODE_GRAPH`, lever 3) → REJECTED, kept off.** Boosting docs that
+  name a queried symbol **craters recall@5 to 0.600 (FAIL)**. Code symbol names (`search`/`validate`/
+  `get`) are common, so the signal is noisy and the 0.55 graph weight drowns the vector. The
+  roadmap's flagged lever does not survive contact with code; the flag stays for experimentation but
+  defaults off.
+- **Hard misses (lever 4) → diagnosed; LICENSE hygiene fixed.** The 4 rank>10 misses are 2×
+  `src/types.ts` burial (it *is* chunked — 15 chunks — but dense packed type-defs lose to *usage*
+  files on NL-vector match: the large-type-file weak spot, needs type-aware chunking + re-index) +
+  1 `keyed-mutex.ts` ranking miss + 1 `stemmer.ts` polluted by **LICENSE files ranking #1**.
+  `path_prior` now demotes `LICENSE`/`COPYING`/`NOTICE` (0.4); the `types.ts` burial is the deep
+  remaining follow-up.
+
+**Cumulative (IDF + kw 0.50 + LICENSE demote) vs the original baseline — strict win on every metric:**
+
+| metric | baseline | tuned | Δ |
+|--------|------|------|------|
+| recall@1 | 0.457 | **0.686** | **+0.229** |
+| recall@5 | 0.829 | **0.857** | +0.028 |
+| recall@10 | 0.886 | 0.886 | 0 |
+| line-recall@1 | 0.314 | **0.486** | **+0.172** |
+| line-recall@5 | 0.657 | **0.771** | +0.114 |
+| line-recall@10 | 0.771 | **0.857** | +0.086 |
+
+mxbai (production embedder) re-confirm: pending a gateway re-index.

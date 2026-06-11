@@ -225,6 +225,37 @@ pub fn code_keyword_idf() -> bool {
     })
 }
 
+/// Keyword weight in `search_code`'s no-graph blend (vector weight = `1 - this`). Cached read of
+/// `ENGRAM_CODE_KW_WEIGHT` (default 0.35). Tunable now that keyword is IDF-sharp.
+pub fn code_kw_weight() -> f64 {
+    use std::sync::OnceLock;
+    static CACHE: OnceLock<f64> = OnceLock::new();
+    *CACHE.get_or_init(|| {
+        std::env::var("ENGRAM_CODE_KW_WEIGHT")
+            .ok()
+            .and_then(|s| s.parse::<f64>().ok())
+            .filter(|v| v.is_finite() && (0.0..=1.0).contains(v))
+            .unwrap_or(0.50)
+    })
+}
+
+/// Whether `search_code` adds a `sym:`-graph signal — boosting chunks whose doc contains a symbol
+/// the query names. Cached read of `ENGRAM_CODE_GRAPH` (default false). Helps symbol-name queries.
+pub fn code_graph() -> bool {
+    use std::sync::OnceLock;
+    static CACHE: OnceLock<bool> = OnceLock::new();
+    *CACHE.get_or_init(|| {
+        std::env::var("ENGRAM_CODE_GRAPH")
+            .ok()
+            .and_then(|s| match s.to_ascii_lowercase().as_str() {
+                "true" | "1" | "yes" | "on" => Some(true),
+                "false" | "0" | "no" | "off" => Some(false),
+                _ => None,
+            })
+            .unwrap_or(false)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
