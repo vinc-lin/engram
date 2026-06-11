@@ -23,7 +23,7 @@ crates totalling ~8.8k lines of Rust:
 ```bash
 cargo build                 # debug (whole workspace)
 cargo build --release       # release (deploy uses target/release/engram)
-cargo test                  # all tests (inline #[cfg(test)] in every module, ~175)
+cargo test                  # all tests (inline #[cfg(test)] in every module, ~179)
 cargo test commit_ingest_is_atomic_and_enqueues   # run a single test by name (substring match)
 cargo test -- --ignored     # network tests, off by default: need a live Ollama / litellm gateway
 cargo clippy                # lints (clippy + fmt are clean; code carries #[allow(clippy::...)] in a few spots)
@@ -135,8 +135,10 @@ apply (graph 0.55 / vector 0.30 / keyword 0.15, graph normalized by the max enti
 count); otherwise it falls back to vector 0.65 / keyword 0.35. Each `Hit` exposes its
 `vector`/`keyword`/`graph` sub-scores. `recall` is query-less, ordered by a freshness decay.
 
-`search_code` is **chunk-level** (not doc-level): vector cosine + keyword, plus a **path-type
-ranking prior** (gated by `ENGRAM_CODE_PATH_PRIOR`) that down-weights docs/tests/config so source
+`search_code` is **chunk-level** (not doc-level): vector cosine + **IDF-weighted keyword**
+(`ENGRAM_CODE_KEYWORD_IDF`, default on — rare query terms dominate ranking; lifted recall@1
+0.46→0.66, see `eval/RESULTS.md`), plus a **path-type ranking prior** (gated by
+`ENGRAM_CODE_PATH_PRIOR`) that down-weights docs/tests/config so source
 ranks first. It returns `path:line` + a code snippet. It reads **chunks, not trees** — so code
 consolidation is unread until the digest tools (`get_architecture`/`get_module`) are used. An
 optional abstention floor (`ENGRAM_CODE_MIN_SCORE`, default off) drops hits below a score so
@@ -215,9 +217,11 @@ cold pipeline deterministically with `while worker_tick(...) {}`.
   `ENGRAM_CONSOLIDATE_CODE` (false), `ENGRAM_CODE_SYMBOL_SPLIT` (true), `ENGRAM_CODE_PATH_PRIOR`
   (true), `ENGRAM_CODE_TREE_SITTER` (true), `ENGRAM_CODE_MIN_SCORE` (0.0 = off; search_code
   abstention floor), `ENGRAM_CODE_NATIVE_PACK` (false), `ENGRAM_CODE_NATIVE_BUDGET` (480),
-  `ENGRAM_MCP_HTTP` (unset), `ENGRAM_INDEX_TIMEOUT_SECS` (120, read by `engram-index`, not the core
+  `ENGRAM_CODE_KEYWORD_IDF` (true; IDF keyword re-rank), `ENGRAM_MCP_HTTP` (unset),
+  `ENGRAM_INDEX_TIMEOUT_SECS` (120, read by `engram-index`, not the core
   `Config`). Plus the gateway/LLM ones:
-  `ENGRAM_GATEWAY_URL`, `ENGRAM_GATEWAY_KEY`, `ENGRAM_LLM_MODEL`, `ENGRAM_LLM_PROVIDER`.
+  `ENGRAM_GATEWAY_URL`, `ENGRAM_EMBED_URL` (= gateway_url; routes embeddings to a separate backend —
+  see `docs/EMBEDDINGS.md`), `ENGRAM_GATEWAY_KEY`, `ENGRAM_LLM_MODEL`, `ENGRAM_LLM_PROVIDER`.
 - **SQLite must live on native ext4, not the v9fs repo mount.** This repo lives on a Windows
   v9fs mount where WAL is flaky and `chmod` doesn't stick. Deploy keeps the DB, vault, logs, and
   `.env` (chmod 600) under `$HOME/engram` on ext4. Point `ENGRAM_DB` at an ext4 path for local
@@ -230,7 +234,7 @@ cold pipeline deterministically with `while worker_tick(...) {}`.
 ## Testing conventions
 
 Tests are inline `#[cfg(test)] mod tests` in each module (across all three crates) — there is no
-`tests/` dir; ~175 tests total, clippy + fmt clean. They build an ephemeral DB via
+`tests/` dir; ~179 tests total, clippy + fmt clean. They build an ephemeral DB via
 `tempfile::tempdir()` + `Store::open`, and use **`HashEmbedder`** (a deterministic, network-free
 bag-of-words embedder) so nothing touches the network. LLM doubles live in `llm.rs`
 (`FakeChatClient`, `NullAuditSink`). API tests use the `spawn()` / `spawn_full()` helpers in
