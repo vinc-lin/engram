@@ -1,7 +1,10 @@
 # Distillation vs. Simple Summary — does engram's consolidation earn its keep?
 
 **Status: complete (2026-06-11). Verdict: the flat summary beats engram's distillation, 1.50 vs
-1.00 (of 2).** The user's instinct was correct.
+1.00 (of 2).** The user's instinct was correct. Two scalable flat-digest *replacements* were then
+prototyped and **both failed** (map-reduce 0.58, rolling-refine 0.33 of 2) — the deeper lesson is to
+retire the digest fold entirely in favour of a single-pass summary + raw retrieval. See
+**Replacement prototypes**.
 
 ## The question
 
@@ -130,6 +133,49 @@ material serves the agent better. With retrieval being the separately-proven-str
 actionable conclusion for the "distilled context" use case: **prefer a flat, regenerated summary
 (or retrieval) over the deep consolidation tree.** The tree-fold is a candidate to **replace**, not
 tune — which directly answers the question that opened this experiment.
+
+## Replacement prototypes (2026-06-11) — both failed, and the failure is the lesson
+
+Having shown the deep tree loses to a one-shot summary, the obvious next step was a *scalable* flat
+digest that recovers the one-shot's quality without needing the whole corpus in one context. Two
+were prototyped (LLM-only, no consolidation machinery) and re-judged blind against the tree and the
+one-shot, all four together:
+
+| Arm | Method | Summarization hops | Mean (0–2) |
+|-----|--------|:--:|:--:|
+| **B — one-shot summary** | one pass over the whole corpus | **1** | **1.58** |
+| A — deep tree (engram) | 4-level fold **+ surfaces raw leaves** | mixed | 1.08 |
+| A′ — map-reduce digest | per-doc digest → combine | 2 | 0.58 |
+| A″ — rolling-refine digest | fold each doc into a running digest | 5 (serial) | 0.33 |
+
+**Both replacement prototypes lost — and lost worse the more they compressed.** For pure-abstractive
+methods the score decays **monotonically with the number of summarization hops**: 1 hop → 1.58,
+2 hops → 0.58, 5 hops → 0.33. The rolling-refine digest (which rewrites the digest once per doc) is
+just a *serial* summary-of-summaries and fared worst of all.
+
+The deep tree's 1.08 is the apparent exception — but only because `drill_down` surfaces **fresh raw
+leaves** alongside the summaries, so its context smuggles in some un-compressed source. That is the
+tell: **what helps is keeping the raw specifics; what hurts is every extra compression hop between
+source and agent.**
+
+### Revised recommendation
+
+The problem was never the tree's *structure* — it's **multi-hop abstractive compression itself**.
+A fancier digest does not fix it; every prototype that pre-summarizes lost. So:
+
+1. **Don't pre-distill.** The autonomous consolidation tree, map-reduce, and rolling-refine are the
+   same mistake at different depths. Minimize hops between source and the agent.
+2. **For an overview digest:** a **single-pass** summary regenerated from the raw source, for any
+   namespace that fits a context window (most do). One hop, global budget allocation — the only
+   method that scored well.
+3. **For specifics:** lean on **retrieval of raw chunks** (`search_code` / `query`) — engram's
+   already-strong half — not a digest.
+4. **If a namespace exceeds the context window:** prefer *extractive* selection (pull the most
+   relevant raw passages) over another abstractive fold; never stack summaries of summaries.
+
+In short: engram's value is **retrieval + a thin single-pass overview**, not hierarchical
+distillation. The consolidation tree should be **retired for the digest path**, not replaced with a
+cleverer fold.
 
 ## Reproduction
 
