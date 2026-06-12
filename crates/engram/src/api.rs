@@ -36,6 +36,8 @@ pub fn app(state: AppState) -> Router {
         .route("/v1/:namespace/query", post(query_docs))
         .route("/v1/:namespace/code/search", post(search_code_docs))
         .route("/v1/:namespace/recall", get(recall_docs))
+        .route("/v1/:namespace/code/graph/callers", post(graph_callers))
+        .route("/v1/:namespace/code/graph/callees", post(graph_callees))
         .route("/v1/:namespace/tree", post(tree_query))
         .route("/v1/:namespace/code/architecture", post(get_architecture))
         .route(
@@ -134,6 +136,15 @@ struct QueryReq {
     limit: Option<usize>,
 }
 
+#[derive(Deserialize)]
+struct GraphReq {
+    sym: Option<String>,
+    path: Option<String>,
+    max_depth: Option<usize>,
+    limit: Option<usize>,
+    min_confidence: Option<f32>,
+}
+
 async fn query_docs(
     State(state): State<AppState>,
     Path(namespace): Path<String>,
@@ -192,6 +203,66 @@ async fn recall_docs(
 ) -> Response {
     match retrieve::recall(&state.store, &namespace, params.limit.unwrap_or(10)) {
         Ok(hits) => Json(hits).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+async fn graph_callers(
+    State(state): State<AppState>,
+    Path(namespace): Path<String>,
+    Json(req): Json<GraphReq>,
+) -> Response {
+    // graph_query reads only SQLite — no embed/LLM calls, no spawn_blocking needed.
+    let sym = match req.sym {
+        Some(s) => s,
+        None => return (StatusCode::BAD_REQUEST, "sym is required").into_response(),
+    };
+    // Edges store dst_sym as "sym:<Name>"; accept a bare name from callers and normalize so
+    // both "process_doc" and "sym:process_doc" resolve to the same edges.
+    let sym = if sym.starts_with("sym:") {
+        sym
+    } else {
+        format!("sym:{sym}")
+    };
+    let max_depth = req
+        .max_depth
+        .unwrap_or(2)
+        .min(crate::config::code_graph_max_depth());
+    let limit = req.limit.unwrap_or(20);
+    let min_conf = req.min_confidence.unwrap_or(0.0);
+    match crate::graph_query::callers(&state.store, &namespace, &sym, max_depth, limit) {
+        Ok(mut hops) => {
+            if min_conf > 0.0 {
+                hops.retain(|h| h.confidence >= min_conf);
+            }
+            Json(hops).into_response()
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+async fn graph_callees(
+    State(state): State<AppState>,
+    Path(namespace): Path<String>,
+    Json(req): Json<GraphReq>,
+) -> Response {
+    let path = match req.path {
+        Some(p) => p,
+        None => return (StatusCode::BAD_REQUEST, "path is required").into_response(),
+    };
+    let max_depth = req
+        .max_depth
+        .unwrap_or(2)
+        .min(crate::config::code_graph_max_depth());
+    let limit = req.limit.unwrap_or(20);
+    let min_conf = req.min_confidence.unwrap_or(0.0);
+    match crate::graph_query::callees(&state.store, &namespace, &path, max_depth, limit) {
+        Ok(mut hops) => {
+            if min_conf > 0.0 {
+                hops.retain(|h| h.confidence >= min_conf);
+            }
+            Json(hops).into_response()
+        }
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }
@@ -837,5 +908,183 @@ mod tests {
             .unwrap();
         let hits: Vec<serde_json::Value> = resp.json().await.unwrap();
         assert_eq!(hits[0]["key"], "d2");
+    }
+
+    /// End-to-end code-graph test. Seeds a 3-file caller→callee graph directly via
+    /// `store.commit_ingest(.., &raw_edges, ..)` with hand-built `RawEdge`s (NOT via the
+    /// `ENGRAM_CODE_GRAPH_EXTRACT` env gate — that gate is a process-global `OnceLock`, so toggling
+    /// it in-process is flaky across the test binary; the gated ingest→extract path is validated
+    /// separately by graph_eval.py in a fresh process). Then hits the live `/code/graph/callers`
+    /// and `/code/graph/callees` HTTP endpoints and asserts the right paths/hops come back,
+    /// including a cross-file caller-of-caller resolved through `chunk_entities`.
+    #[tokio::test]
+    async fn graph_callers_and_callees_end_to_end() {
+        use crate::embed::Embedder;
+        use crate::model::{EdgeKind, NewDoc, RawEdge, Taint};
+
+        let (base, store, embedder, _d) = spawn_full().await;
+        let sig = embedder.signature();
+
+        // Helper: ingest one code file with its defining sym entity + outbound edges.
+        let seed = |key: &str, content: &str, def_sym: &str, edges: Vec<RawEdge>| {
+            let new = NewDoc {
+                key: key.into(),
+                title: key.into(),
+                content: content.into(),
+                author: "code".into(),
+                taint: Taint::Internal,
+                meta: Some(serde_json::json!({ "kind": "file" })),
+            };
+            let emb_vec = embedder.embed(content).unwrap();
+            store
+                .commit_ingest(
+                    "ns",
+                    &new,
+                    &[content.to_string()],
+                    &[emb_vec],
+                    &[vec![def_sym.to_string()]],
+                    &[Some((1, 1))],
+                    &edges,
+                    &sig,
+                )
+                .unwrap()
+        };
+
+        // leaf.rs defines `leaf`, calls nothing.
+        let leaf_doc = seed("src/leaf.rs", "fn leaf() {}", "sym:leaf", vec![]);
+        // middle.rs defines `middle`, calls `leaf` (cross-file edge → resolves to leaf.rs).
+        let _middle_doc = seed(
+            "src/middle.rs",
+            "fn middle() { leaf(); }",
+            "sym:middle",
+            vec![RawEdge {
+                dst_sym: "sym:leaf".into(),
+                edge_kind: EdgeKind::Calls,
+                src_line: Some(1),
+                confidence: 0.9,
+            }],
+        );
+        // top.rs defines `top`, calls `middle` (so top is a caller-of-caller of leaf).
+        let _top_doc = seed(
+            "src/top.rs",
+            "fn top() { middle(); }",
+            "sym:top",
+            vec![RawEdge {
+                dst_sym: "sym:middle".into(),
+                edge_kind: EdgeKind::Calls,
+                src_line: Some(1),
+                confidence: 0.9,
+            }],
+        );
+
+        let client = reqwest::Client::new();
+
+        // callers(sym:leaf, depth=2): direct caller middle.rs (depth 1) plus the cross-file
+        // caller-of-caller top.rs (depth 2), reached by expanding middle.rs's own sym: defs.
+        let resp = client
+            .post(format!("{base}/v1/ns/code/graph/callers"))
+            .bearer_auth("secret")
+            .json(&serde_json::json!({"sym": "sym:leaf", "max_depth": 2, "limit": 10}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+        let hops: Vec<serde_json::Value> = resp.json().await.unwrap();
+        let paths: Vec<&str> = hops.iter().map(|h| h["path"].as_str().unwrap()).collect();
+        assert!(
+            paths.contains(&"src/middle.rs"),
+            "expected direct caller src/middle.rs; got {paths:?}"
+        );
+        assert!(
+            paths.contains(&"src/top.rs"),
+            "expected cross-file caller-of-caller src/top.rs; got {paths:?}"
+        );
+        // The direct caller hop is at depth 1, the caller-of-caller at depth 2.
+        let middle_hop = hops.iter().find(|h| h["path"] == "src/middle.rs").unwrap();
+        assert_eq!(middle_hop["depth"].as_u64().unwrap(), 1);
+        assert_eq!(middle_hop["edge_kind"].as_str().unwrap(), "CALLS");
+        let top_hop = hops.iter().find(|h| h["path"] == "src/top.rs").unwrap();
+        assert_eq!(top_hop["depth"].as_u64().unwrap(), 2);
+
+        // min_confidence filter is post-BFS: 0.95 drops the 0.9 edges → empty.
+        let resp = client
+            .post(format!("{base}/v1/ns/code/graph/callers"))
+            .bearer_auth("secret")
+            .json(&serde_json::json!({"sym": "sym:leaf", "max_depth": 2, "min_confidence": 0.95}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+        let filtered: Vec<serde_json::Value> = resp.json().await.unwrap();
+        assert!(
+            filtered.is_empty(),
+            "min_confidence 0.95 should drop the 0.9 caller edges; got {filtered:?}"
+        );
+
+        // BARE sym name (no "sym:" prefix) must be normalized server-side and resolve to the
+        // same callers as the prefixed form — previously this returned silently-empty results.
+        let resp = client
+            .post(format!("{base}/v1/ns/code/graph/callers"))
+            .bearer_auth("secret")
+            .json(&serde_json::json!({"sym": "leaf", "max_depth": 2, "limit": 10}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+        let bare_hops: Vec<serde_json::Value> = resp.json().await.unwrap();
+        let bare_paths: Vec<&str> = bare_hops
+            .iter()
+            .map(|h| h["path"].as_str().unwrap())
+            .collect();
+        assert!(
+            bare_paths.contains(&"src/middle.rs"),
+            "bare sym 'leaf' should resolve the direct caller src/middle.rs; got {bare_paths:?}"
+        );
+
+        // missing `sym` → 400.
+        let resp = client
+            .post(format!("{base}/v1/ns/code/graph/callers"))
+            .bearer_auth("secret")
+            .json(&serde_json::json!({"max_depth": 2}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 400);
+
+        // callees(src/middle.rs): outbound CALLS to sym:leaf, resolved cross-file via
+        // chunk_entities to leaf.rs's document_id.
+        let resp = client
+            .post(format!("{base}/v1/ns/code/graph/callees"))
+            .bearer_auth("secret")
+            .json(&serde_json::json!({"path": "src/middle.rs", "max_depth": 2, "limit": 10}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+        let hops: Vec<serde_json::Value> = resp.json().await.unwrap();
+        let leaf_hop = hops
+            .iter()
+            .find(|h| h["sym"] == "sym:leaf")
+            .expect("expected callee sym:leaf");
+        assert_eq!(
+            leaf_hop["path"].as_str().unwrap(),
+            "src/leaf.rs",
+            "callee should resolve cross-file to leaf.rs"
+        );
+        assert_eq!(
+            leaf_hop["document_id"].as_str().unwrap(),
+            leaf_doc.document_id,
+            "callee document_id should be leaf.rs's doc id (resolved via chunk_entities)"
+        );
+
+        // missing `path` → 400.
+        let resp = client
+            .post(format!("{base}/v1/ns/code/graph/callees"))
+            .bearer_auth("secret")
+            .json(&serde_json::json!({"max_depth": 2}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 400);
     }
 }

@@ -37,6 +37,18 @@ pub struct CommitHit {
     pub score: f64,
 }
 
+/// One hop in a call-graph trace (callers or callees of a symbol). Crate-local: engram-mcp
+/// talks to the core over HTTP and does not depend on the engram crate.
+#[derive(Debug, Clone)]
+pub struct TraceHop {
+    pub path: String,
+    pub document_id: String,
+    pub sym: String,
+    pub edge_kind: String,
+    pub confidence: f32,
+    pub depth: usize,
+}
+
 // ---------------------------------------------------------------------------
 // Backend trait + real HTTP impl
 // ---------------------------------------------------------------------------
@@ -51,6 +63,16 @@ pub trait CodeSearch {
     fn why(&self, query: &str, limit: usize) -> Result<Vec<CommitHit>, String>;
     /// Read the repo's extracted coding-conventions document.
     fn get_conventions(&self) -> Result<String, String>;
+    /// Walk the code graph from a symbol (callers) or a file (callees).
+    /// `direction` is `"callers"` or `"callees"`.
+    fn trace_symbol(
+        &self,
+        sym: Option<&str>,
+        path: Option<&str>,
+        direction: &str,
+        depth: usize,
+        limit: usize,
+    ) -> Result<Vec<TraceHop>, String>;
 }
 
 /// Wire-shape returned by the engram code-search endpoint.
@@ -85,6 +107,17 @@ struct RawCommit {
 #[derive(Deserialize)]
 struct RawConventions {
     content: String,
+}
+
+/// Wire-shape returned by POST /v1/:ns/code/graph/callers and /callees.
+#[derive(Deserialize)]
+struct RawTraceHop {
+    path: String,
+    document_id: String,
+    sym: String,
+    edge_kind: String,
+    confidence: f32,
+    depth: usize,
 }
 
 pub struct HttpCodeSearch {
@@ -223,6 +256,56 @@ impl CodeSearch for HttpCodeSearch {
         let raw: RawConventions = resp.json().map_err(|e| e.to_string())?;
         Ok(raw.content)
     }
+
+    fn trace_symbol(
+        &self,
+        sym: Option<&str>,
+        path: Option<&str>,
+        direction: &str,
+        depth: usize,
+        limit: usize,
+    ) -> Result<Vec<TraceHop>, String> {
+        let suffix = if direction == "callees" {
+            "code/graph/callees"
+        } else {
+            "code/graph/callers"
+        };
+        let endpoint = format!("{}/v1/{}/{}", self.url, self.namespace, suffix);
+        let mut body = json!({ "max_depth": depth, "limit": limit });
+        if let Some(s) = sym {
+            body["sym"] = json!(s);
+        }
+        if let Some(p) = path {
+            body["path"] = json!(p);
+        }
+        let resp = self
+            .client
+            .post(&endpoint)
+            .bearer_auth(&self.token)
+            .json(&body)
+            .send()
+            .map_err(|e| e.to_string())?;
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(format!(
+                "HTTP {}: {}",
+                status,
+                resp.text().unwrap_or_default()
+            ));
+        }
+        let raw: Vec<RawTraceHop> = resp.json().map_err(|e| e.to_string())?;
+        Ok(raw
+            .into_iter()
+            .map(|h| TraceHop {
+                path: h.path,
+                document_id: h.document_id,
+                sym: h.sym,
+                edge_kind: h.edge_kind,
+                confidence: h.confidence,
+                depth: h.depth,
+            })
+            .collect())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -271,6 +354,26 @@ pub fn format_commits(hits: &[CommitHit]) -> String {
             format!(
                 "{}  by {}  (score {:.2})\n{}",
                 c.key, c.author, c.score, c.title
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+pub fn format_trace(hops: &[TraceHop]) -> String {
+    if hops.is_empty() {
+        return "No graph edges found.".to_string();
+    }
+    hops.iter()
+        .map(|h| {
+            let id = if h.document_id.is_empty() {
+                format!("{} {}", h.path, h.sym)
+            } else {
+                h.document_id.clone()
+            };
+            format!(
+                "{}  {}  {}  conf={:.2}  depth={}\n{}",
+                h.path, h.edge_kind, h.sym, h.confidence, h.depth, id
             )
         })
         .collect::<Vec<_>>()
@@ -370,6 +473,23 @@ fn get_conventions_tool_def() -> Value {
     })
 }
 
+fn trace_symbol_tool_def() -> Value {
+    json!({
+        "name": "trace_symbol",
+        "description": "Walk the code call-graph to find callers of a symbol or callees from a file. Uses statically extracted edges (Rust/C/C++ in v1). Supply either `sym` (e.g. 'ingest_document') or `path` (a file path); `direction` controls which way to walk.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "sym":       { "type": "string", "description": "symbol name to look up callers for, e.g. 'process_doc'" },
+                "path":      { "type": "string", "description": "repo-relative file path to look up callees from, e.g. 'src/api.rs'" },
+                "direction": { "type": "string", "description": "'callers' (default) or 'callees'" },
+                "depth":     { "type": "integer", "description": "max hops to traverse (default 2)" },
+                "limit":     { "type": "integer", "description": "max results (default 20)" }
+            }
+        }
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Dispatch — the unit-tested core
 // ---------------------------------------------------------------------------
@@ -396,7 +516,7 @@ pub fn dispatch(req: &Value, backend: &dyn CodeSearch) -> Option<Value> {
         "tools/list" => Some(json!({
             "jsonrpc": "2.0",
             "id": id,
-            "result": { "tools": [search_code_tool_def(), get_architecture_tool_def(), get_module_tool_def(), why_tool_def(), find_symbol_tool_def(), get_conventions_tool_def()] }
+            "result": { "tools": [search_code_tool_def(), get_architecture_tool_def(), get_module_tool_def(), why_tool_def(), find_symbol_tool_def(), get_conventions_tool_def(), trace_symbol_tool_def()] }
         })),
 
         "tools/call" => {
@@ -423,6 +543,20 @@ pub fn dispatch(req: &Value, backend: &dyn CodeSearch) -> Option<Value> {
                     backend.search(name, limit).map(|h| format_hits(&h))
                 }
                 "get_conventions" => backend.get_conventions(),
+                "trace_symbol" => {
+                    let sym = args.get("sym").and_then(Value::as_str);
+                    let path = args.get("path").and_then(Value::as_str);
+                    let direction = args
+                        .get("direction")
+                        .and_then(Value::as_str)
+                        .unwrap_or("callers");
+                    let depth = args.get("depth").and_then(Value::as_u64).unwrap_or(2) as usize;
+                    let trace_limit =
+                        args.get("limit").and_then(Value::as_u64).unwrap_or(20) as usize;
+                    backend
+                        .trace_symbol(sym, path, direction, depth, trace_limit)
+                        .map(|h| format_trace(&h))
+                }
                 _ => {
                     return Some(json!({
                         "jsonrpc": "2.0",
@@ -511,6 +645,16 @@ mod tests {
         fn get_conventions(&self) -> Result<String, String> {
             Ok("- format with rustfmt (evidence: rustfmt.toml)".into())
         }
+        fn trace_symbol(
+            &self,
+            _sym: Option<&str>,
+            _path: Option<&str>,
+            _direction: &str,
+            _depth: usize,
+            _limit: usize,
+        ) -> Result<Vec<TraceHop>, String> {
+            Ok(vec![])
+        }
     }
 
     struct ErrorSearch(String);
@@ -530,6 +674,53 @@ mod tests {
         }
         fn get_conventions(&self) -> Result<String, String> {
             Err(self.0.clone())
+        }
+        fn trace_symbol(
+            &self,
+            _sym: Option<&str>,
+            _path: Option<&str>,
+            _direction: &str,
+            _depth: usize,
+            _limit: usize,
+        ) -> Result<Vec<TraceHop>, String> {
+            Err(self.0.clone())
+        }
+    }
+
+    // A separate test double that returns one non-empty hop, for the formatting test.
+    struct FakeTracer;
+    impl CodeSearch for FakeTracer {
+        fn search(&self, _: &str, _: usize) -> Result<Vec<CodeHit>, String> {
+            Ok(vec![])
+        }
+        fn get_architecture(&self, _: &str, _: usize) -> Result<Vec<Digest>, String> {
+            Ok(vec![])
+        }
+        fn get_module(&self, _: &str, _: &str, _: usize) -> Result<Vec<Digest>, String> {
+            Ok(vec![])
+        }
+        fn why(&self, _: &str, _: usize) -> Result<Vec<CommitHit>, String> {
+            Ok(vec![])
+        }
+        fn get_conventions(&self) -> Result<String, String> {
+            Ok(String::new())
+        }
+        fn trace_symbol(
+            &self,
+            _: Option<&str>,
+            _: Option<&str>,
+            _: &str,
+            _: usize,
+            _: usize,
+        ) -> Result<Vec<TraceHop>, String> {
+            Ok(vec![TraceHop {
+                path: "src/ingest.rs".into(),
+                document_id: "doc-abc".into(),
+                sym: "sym:ingest_document".into(),
+                edge_kind: "CALLS".into(),
+                confidence: 0.95,
+                depth: 1,
+            }])
         }
     }
 
@@ -695,6 +886,86 @@ mod tests {
         assert_eq!(resp["result"]["isError"], false);
         let text = resp["result"]["content"][0]["text"].as_str().unwrap();
         assert!(text.contains("digest for src/state"));
+    }
+
+    #[test]
+    fn trace_symbol_method_exists_on_trait() {
+        // FakeSearch returns empty for trace_symbol; FakeTracer returns the stub hop.
+        let fake = no_hits(); // FakeSearch(vec![])
+        let hops = fake
+            .trace_symbol(Some("ingest_document"), None, "callers", 2, 10)
+            .unwrap();
+        assert!(
+            hops.is_empty(),
+            "FakeSearch::trace_symbol must return empty"
+        );
+    }
+
+    #[test]
+    fn format_trace_empty_returns_sentinel() {
+        assert_eq!(format_trace(&[]), "No graph edges found.");
+    }
+
+    #[test]
+    fn format_trace_nonempty_contains_path_sym_kind_depth() {
+        let hops = vec![TraceHop {
+            path: "src/api.rs".into(),
+            document_id: "doc-xyz".into(),
+            sym: "sym:handle_ingest".into(),
+            edge_kind: "CALLS".into(),
+            confidence: 0.90,
+            depth: 1,
+        }];
+        let s = format_trace(&hops);
+        assert!(s.contains("src/api.rs"));
+        assert!(s.contains("sym:handle_ingest"));
+        assert!(s.contains("CALLS"));
+        assert!(s.contains("depth=1"));
+        assert!(s.contains("0.90"));
+    }
+
+    #[test]
+    fn tools_list_includes_all_seven_tools() {
+        let req = json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {} });
+        let resp = dispatch(&req, &no_hits()).unwrap();
+        let tools = resp["result"]["tools"].as_array().unwrap();
+        let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
+        assert_eq!(names.len(), 7, "expected 7 tools, got {names:?}");
+        assert!(names.contains(&"search_code"));
+        assert!(names.contains(&"get_architecture"));
+        assert!(names.contains(&"get_module"));
+        assert!(names.contains(&"why"));
+        assert!(names.contains(&"find_symbol"));
+        assert!(names.contains(&"get_conventions"));
+        assert!(names.contains(&"trace_symbol"));
+    }
+
+    #[test]
+    fn tools_call_trace_symbol_formats_hops() {
+        let req = json!({
+            "jsonrpc": "2.0", "id": 20, "method": "tools/call",
+            "params": { "name": "trace_symbol",
+                        "arguments": { "sym": "ingest_document", "direction": "callers", "depth": 2, "limit": 20 } }
+        });
+        let resp = dispatch(&req, &FakeTracer).unwrap();
+        assert_eq!(resp["result"]["isError"], false);
+        let text = resp["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("src/ingest.rs"));
+        assert!(text.contains("sym:ingest_document"));
+        assert!(text.contains("CALLS"));
+        assert!(text.contains("depth=1"));
+    }
+
+    #[test]
+    fn tools_call_trace_symbol_no_results() {
+        let req = json!({
+            "jsonrpc": "2.0", "id": 21, "method": "tools/call",
+            "params": { "name": "trace_symbol", "arguments": { "sym": "nothing" } }
+        });
+        let resp = dispatch(&req, &no_hits()).unwrap();
+        assert_eq!(resp["result"]["isError"], false);
+        let text = resp["result"]["content"][0]["text"].as_str().unwrap();
+        assert_eq!(text, "No graph edges found.");
     }
 
     #[test]

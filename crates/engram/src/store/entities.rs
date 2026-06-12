@@ -22,6 +22,24 @@ impl Store {
         Ok(())
     }
 
+    /// All distinct `sym:` entity ids recorded for a document in `namespace`, via the read pool
+    /// (index `idx_chunk_entities_entity`). Used by `graph_query::callers` to expand the upward
+    /// BFS through a caller's own defined symbols. Returns only `sym:%` entities — `path:`,
+    /// `import:`, and prose entities are excluded.
+    pub fn sym_entities_for_doc(&self, ns: &str, doc_id: &str) -> Result<Vec<String>> {
+        let conn = self.read.get()?;
+        let mut stmt = conn.prepare_cached(
+            "SELECT DISTINCT entity_id FROM chunk_entities
+             WHERE namespace=?1 AND document_id=?2 AND entity_id LIKE 'sym:%'",
+        )?;
+        let rows = stmt.query_map(params![ns, doc_id], |r| r.get::<_, String>(0))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
     /// For each document in `namespace`, how many of `entity_ids` it mentions
     /// (across its chunks). Documents with zero overlap are omitted.
     pub fn docs_with_entities(

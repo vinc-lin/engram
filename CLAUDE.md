@@ -87,11 +87,13 @@ network I/O.
 |------|------|
 | `main.rs` | Bootstrap: load `Config` → `Store::open` → `requeue_running` (crash recovery) → build embedder (`GatewayEmbedder`, optionally wrapped in `FallbackEmbedder`) + `GatewayChatClient` + `TreeProcessor` → spawn workers + sweeper → serve axum |
 | `api.rs` | Router, `AppState` (`store`, `token`, `Arc<dyn Embedder>`, `Arc<dyn ChatClient>`), Bearer-auth middleware, handlers |
-| `store/` | SQLite layer split into a module dir: `mod.rs` (schema + open + write lock), `docs.rs`, `chunks.rs`, `entities.rs`, `jobs.rs`, `trees.rs` (single-writer, transactions, vector + entity + tree + job queries) |
+| `store/` | SQLite layer split into a module dir: `mod.rs` (schema + open + write lock), `docs.rs`, `chunks.rs`, `entities.rs`, `edges.rs` (code-graph `code_edges` read/write), `jobs.rs`, `trees.rs` (single-writer, transactions, vector + entity + tree + edge + job queries) |
 | `ingest.rs` | Chunking + mechanical entity extraction + `ingest_document` (hot path); **code-mode dispatch** on `meta.kind=="file"` |
 | `treesit.rs` | Tree-sitter boundary chunking + AST symbols for 10 langs (Rust/Python/JS/TS/TSX/Go/Kotlin/Java/C/C++); C/C++ also support a definition-packing mode (`is_boundary`/`chunk_segments`) |
 | `conventions.rs` | `rebuild_conventions` — derives the per-repo conventions/architecture digest into `<ns>:meta` |
 | `retrieve.rs` | `query` (hybrid scoring), `search_code` (chunk-level code search), `recall` (recency), `drill_down` (tree BFS) |
+| `graph.rs` | `extract_edges` — pure tree-sitter CALLS/USES_TYPE/IMPORTS edge extraction (Rust + C/C++ in v1), off-lock; in-file + import-scoped name resolution (conf 1.0/0.6/0.3) |
+| `graph_query.rs` | `callers`/`callees` BFS over `code_edges` (lazy cross-file resolution via `chunk_entities`); returns `TraceHop` — an **exact structural index, never read by `search_code`** |
 | `embed.rs` | `Embedder` trait + `HashEmbedder` (tests), `OllamaEmbedder`, `GatewayEmbedder` (prod), `FallbackEmbedder` (primary+fallback wrapper) |
 | `jobs.rs` | `JobProcessor` trait, `worker_tick`, `spawn_workers`, `NoopProcessor` |
 | `tree.rs` | Cold pipeline: `process_doc` fanout, `seal_cascade`, `TreeProcessor`, `spawn_sweeper` |
@@ -168,7 +170,15 @@ consolidated, keeps the latest leaf per `doc_id`, and cosine-reranks against the
 HTTP endpoints (all under `/v1/:namespace`, Bearer-auth; plus `GET /healthz`): `GET|POST /docs`,
 `GET /docs/:id`, `DELETE /docs/by-key/:key`, `POST /query`, `POST /code/search`, `GET /recall`,
 `POST /tree`, `POST /code/architecture`, `POST /code/architecture/rebuild`, `POST /code/module`,
-`GET /conventions`, `POST /conventions/rebuild`.
+`GET /conventions`, `POST /conventions/rebuild`, `POST /code/graph/callers`, `POST /code/graph/callees`.
+
+**Code-graph is an exact structural index, gated OFF by default.** `code_edges` is populated at
+ingest only when `ENGRAM_CODE_GRAPH_EXTRACT=true` (extraction is off-lock, written inside
+`commit_ingest`'s atomic transaction). The `callers`/`callees` endpoints traverse it for exact
+"what calls X" / "what does this file call" queries; they read `code_edges`, **never** the chunk
+vectors — `code_edges` must never feed `search_code`'s cosine ranking (a `sym:`-overlap signal blended
+at weight 0.55 was measured to crater recall@5 to 0.600). Resolution is heuristic (overloads, virtual
+dispatch, macros, templates are missed); it is a navigation aid, not a type-checked call graph.
 
 **Digest path is single-pass, not the tree.** `get_architecture`/`get_module` serve a cached
 **single-pass** digest from `<ns>:meta` (key `architecture` / `module:<dir>`), built by
@@ -177,10 +187,12 @@ the repo's source files; the consolidation-tree drill is only a fallback when no
 A single compression pass preserves specifics that the deep summary-of-summaries fold loses —
 measured: one-shot 1.58 vs tree 1.08 of 2, see `eval/RESULTS_distillation.md`.
 
-`engram-mcp` exposes **6 tools** over stdio (and HTTP JSON-RPC when `ENGRAM_MCP_HTTP` is set),
+`engram-mcp` exposes **7 tools** over stdio (and HTTP JSON-RPC when `ENGRAM_MCP_HTTP` is set),
 each backed by an endpoint above: `search_code`, `get_architecture` (global single-pass digest),
 `get_module(path)` (a directory's single-pass digest), `why(query)` (git-history commits, via
-`:history`), `find_symbol(name)`, `get_conventions()` (the `:meta` digest).
+`:history`), `find_symbol(name)`, `get_conventions()` (the `:meta` digest), `trace_symbol(sym|path,
+direction=callers|callees)` (code-graph traversal; accepts bare or `sym:`-prefixed names — the
+handler normalizes — and is empty unless the namespace was indexed with `ENGRAM_CODE_GRAPH_EXTRACT`).
 
 ### Job queue semantics (`store/jobs.rs` + `jobs.rs`)
 `job_id` = `"{namespace}:{document_id}"`, so re-ingesting a doc idempotently re-enqueues (the
@@ -222,6 +234,10 @@ cold pipeline deterministically with `while worker_tick(...) {}`.
   `ENGRAM_CODE_KEYWORD_IDF` (true; IDF keyword re-rank), `ENGRAM_CODE_KW_WEIGHT` (0.50; keyword blend
   weight), `ENGRAM_CODE_DEF_BOOST` (0.10; additive boost for the file defining a rare query symbol),
   `ENGRAM_CODE_GRAPH` (false; `sym:`-graph signal — measured to *hurt* code recall, kept off),
+  `ENGRAM_CODE_GRAPH_EXTRACT` (false; populate the `code_edges` structural index at ingest — the
+  `trace_symbol`/`callers`/`callees` capability, exact-index-only, never blended into `search_code`),
+  `ENGRAM_CODE_GRAPH_MIN_CONFIDENCE` (0.6; drop edges below this at write time),
+  `ENGRAM_CODE_GRAPH_MAX_DEPTH` (4; BFS depth cap for callers/callees),
   `ENGRAM_MCP_HTTP` (unset),
   `ENGRAM_INDEX_TIMEOUT_SECS` (120, read by `engram-index`, not the core
   `Config`). Plus the gateway/LLM ones:

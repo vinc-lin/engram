@@ -1,11 +1,12 @@
 use crate::error::Result;
-use crate::model::{MemoryDoc, NewDoc, Taint};
+use crate::model::{MemoryDoc, NewDoc, RawEdge, Taint};
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{params, Connection};
 use std::sync::{Arc, Mutex};
 
 mod chunks;
 mod docs;
+mod edges;
 mod entities;
 mod jobs;
 mod trees;
@@ -87,6 +88,20 @@ CREATE TABLE IF NOT EXISTS tree_edges (
     PRIMARY KEY (parent_id, child_id)
 );
 CREATE INDEX IF NOT EXISTS idx_tree_edges_parent ON tree_edges(parent_id);
+CREATE TABLE IF NOT EXISTS code_edges (
+    namespace   TEXT NOT NULL,
+    src_doc_id  TEXT NOT NULL,
+    dst_sym     TEXT NOT NULL,
+    dst_doc_id  TEXT,
+    edge_kind   TEXT NOT NULL,
+    src_line    INTEGER,
+    confidence  REAL NOT NULL DEFAULT 1.0,
+    PRIMARY KEY (namespace, src_doc_id, dst_sym, edge_kind)
+);
+CREATE INDEX IF NOT EXISTS idx_code_edges_src
+    ON code_edges(namespace, src_doc_id);
+CREATE INDEX IF NOT EXISTS idx_code_edges_dst_sym
+    ON code_edges(namespace, dst_sym);
 ";
 
 #[derive(Clone)]
@@ -96,7 +111,7 @@ pub struct Store {
 }
 
 fn migrate(conn: &Connection) -> Result<()> {
-    // Read the current columns of vector_chunks.
+    // --- migration v1: add line columns to vector_chunks ---
     let mut stmt = conn.prepare("PRAGMA table_info(vector_chunks)")?;
     let col_names: Vec<String> = stmt
         .query_map([], |r| r.get::<_, String>(1))?
@@ -109,7 +124,25 @@ fn migrate(conn: &Connection) -> Result<()> {
         conn.execute_batch("ALTER TABLE vector_chunks ADD COLUMN line_end INTEGER;")?;
     }
 
-    conn.execute_batch("PRAGMA user_version = 1;")?;
+    // --- migration v2: add code_edges table + indexes (IF NOT EXISTS = safe on fresh DBs) ---
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS code_edges (
+            namespace   TEXT NOT NULL,
+            src_doc_id  TEXT NOT NULL,
+            dst_sym     TEXT NOT NULL,
+            dst_doc_id  TEXT,
+            edge_kind   TEXT NOT NULL,
+            src_line    INTEGER,
+            confidence  REAL NOT NULL DEFAULT 1.0,
+            PRIMARY KEY (namespace, src_doc_id, dst_sym, edge_kind)
+        );
+        CREATE INDEX IF NOT EXISTS idx_code_edges_src
+            ON code_edges(namespace, src_doc_id);
+        CREATE INDEX IF NOT EXISTS idx_code_edges_dst_sym
+            ON code_edges(namespace, dst_sym);",
+    )?;
+
+    conn.execute_batch("PRAGMA user_version = 2;")?;
     Ok(())
 }
 
@@ -144,6 +177,7 @@ impl Store {
         embeddings: &[Vec<f32>],
         entities: &[Vec<String>],
         line_ranges: &[Option<(i64, i64)>],
+        raw_edges: &[RawEdge],
         signature: &str,
     ) -> Result<MemoryDoc> {
         let now = now_secs();
@@ -196,6 +230,9 @@ impl Store {
                     )?;
                 }
             }
+            // Replace all code edges for this doc, inside the same tx (mirrors the chunk/entity
+            // DELETE+INSERT pattern). dst_doc_id is left NULL; resolved lazily at query time.
+            edges::insert_edges_in_tx(&tx, namespace, &doc_id, raw_edges)?;
             enqueue_job_sql(&tx, namespace, &doc_id, now)?;
             tx.commit()?;
         }
@@ -291,6 +328,44 @@ mod tests {
             )
             .unwrap();
         assert_eq!(n, 1);
+    }
+
+    #[test]
+    fn code_edges_table_and_indexes_exist() {
+        let (store, _d) = temp_store();
+        let conn = store.read.get().unwrap();
+
+        let n: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='code_edges'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 1, "code_edges table missing");
+
+        let si: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type='index' AND name='idx_code_edges_src'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(si, 1, "idx_code_edges_src missing");
+
+        let di: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type='index' AND name='idx_code_edges_dst_sym'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(di, 1, "idx_code_edges_dst_sym missing");
+
+        let ver: i64 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(ver, 2, "user_version should be 2 after migration");
     }
 
     #[test]
@@ -464,9 +539,24 @@ mod tests {
         let chunks = vec!["chunk one @bob".to_string(), "chunk two".to_string()];
         let embs = vec![vec![1.0f32, 0.0], vec![0.0f32, 1.0]];
         let ents = vec![vec!["handle:bob".to_string()], vec![]];
+        let edges = vec![crate::model::RawEdge {
+            dst_sym: "sym:Foo".to_string(),
+            edge_kind: crate::model::EdgeKind::Calls,
+            src_line: Some(10),
+            confidence: 0.9,
+        }];
 
         let doc = store
-            .commit_ingest("alice", &new, &chunks, &embs, &ents, &[None, None], "sig")
+            .commit_ingest(
+                "alice",
+                &new,
+                &chunks,
+                &embs,
+                &ents,
+                &[None, None],
+                &edges,
+                "sig",
+            )
             .unwrap();
         let got = store.chunks_for_namespace("alice", "sig").unwrap();
         assert_eq!(got.len(), 2);
@@ -489,7 +579,38 @@ mod tests {
             "pending"
         );
 
-        // re-ingest same key: replaces chunks, re-enqueues, keeps the same doc id
+        // Verify edges were written
+        {
+            let conn = store.read.get().unwrap();
+            let count: i64 = conn
+                .query_row(
+                    "SELECT count(*) FROM code_edges WHERE namespace='alice' AND src_doc_id=?1",
+                    rusqlite::params![doc.document_id],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(count, 1, "expected 1 edge after first ingest");
+            let (dst_sym, kind, src_line, conf): (String, String, Option<i64>, f64) = conn
+                .query_row(
+                    "SELECT dst_sym, edge_kind, src_line, confidence
+                     FROM code_edges WHERE namespace='alice' AND src_doc_id=?1",
+                    rusqlite::params![doc.document_id],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+                )
+                .unwrap();
+            assert_eq!(dst_sym, "sym:Foo");
+            assert_eq!(kind, "CALLS");
+            assert_eq!(src_line, Some(10));
+            assert!((conf - 0.9).abs() < 1e-6);
+        }
+
+        // re-ingest same key with DIFFERENT edges: replaces chunks, replaces edges, re-enqueues
+        let new_edges = vec![crate::model::RawEdge {
+            dst_sym: "sym:Bar".to_string(),
+            edge_kind: crate::model::EdgeKind::UsesType,
+            src_line: None,
+            confidence: 1.0,
+        }];
         let doc2 = store
             .commit_ingest(
                 "alice",
@@ -498,6 +619,7 @@ mod tests {
                 &[vec![1.0f32, 1.0]],
                 &[vec![]],
                 &[None],
+                &new_edges,
                 "sig",
             )
             .unwrap();
@@ -505,6 +627,154 @@ mod tests {
         assert_eq!(store.chunks_for_namespace("alice", "sig").unwrap().len(), 1);
         assert!(store
             .docs_with_entities("alice", &["handle:bob".into()])
+            .unwrap()
+            .is_empty());
+
+        // old edge (sym:Foo) gone, new edge (sym:Bar) present — idempotent replace
+        {
+            let conn = store.read.get().unwrap();
+            let count: i64 = conn
+                .query_row(
+                    "SELECT count(*) FROM code_edges WHERE namespace='alice' AND src_doc_id=?1",
+                    rusqlite::params![doc.document_id],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(count, 1, "expected exactly 1 edge after re-ingest");
+            let dst: String = conn
+                .query_row(
+                    "SELECT dst_sym FROM code_edges WHERE namespace='alice' AND src_doc_id=?1",
+                    rusqlite::params![doc.document_id],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(dst, "sym:Bar", "old edge must be replaced by new edge");
+        }
+    }
+
+    #[test]
+    fn edges_read_methods_seed_and_roundtrip() {
+        use crate::model::{EdgeKind, RawEdge};
+
+        let (store, _d) = temp_store();
+
+        let mk = |key: &str| NewDoc {
+            key: key.into(),
+            title: key.into(),
+            content: "x".into(),
+            author: "a".into(),
+            taint: Taint::Internal,
+            meta: None,
+        };
+        let src_doc = store
+            .commit_ingest(
+                "ns",
+                &mk("src.rs"),
+                &["fn foo() { bar(); }".into()],
+                &[vec![1.0f32]],
+                &[vec!["sym:foo".into()]],
+                &[Some((1, 3))],
+                &[
+                    RawEdge {
+                        dst_sym: "sym:bar".into(),
+                        edge_kind: EdgeKind::Calls,
+                        src_line: Some(1),
+                        confidence: 1.0,
+                    },
+                    RawEdge {
+                        dst_sym: "sym:Baz".into(),
+                        edge_kind: EdgeKind::UsesType,
+                        src_line: Some(2),
+                        confidence: 0.8,
+                    },
+                ],
+                "sig",
+            )
+            .unwrap();
+        let _dst_doc = store
+            .commit_ingest(
+                "ns",
+                &mk("bar.rs"),
+                &["fn bar() {}".into()],
+                &[vec![0.5f32]],
+                &[vec!["sym:bar".into()]],
+                &[Some((1, 1))],
+                &[],
+                "sig",
+            )
+            .unwrap();
+
+        let from = store.edges_from("ns", &src_doc.document_id).unwrap();
+        assert_eq!(from.len(), 2);
+        let calls_edge = from
+            .iter()
+            .find(|e| e.edge_kind == EdgeKind::Calls)
+            .unwrap();
+        assert_eq!(calls_edge.dst_sym, "sym:bar");
+        assert_eq!(calls_edge.src_line, Some(1));
+        assert!((calls_edge.confidence - 1.0).abs() < 1e-6);
+        let type_edge = from
+            .iter()
+            .find(|e| e.edge_kind == EdgeKind::UsesType)
+            .unwrap();
+        assert_eq!(type_edge.dst_sym, "sym:Baz");
+        assert!((type_edge.confidence - 0.8).abs() < 1e-5);
+
+        assert!(store
+            .edges_from("other", &src_doc.document_id)
+            .unwrap()
+            .is_empty());
+
+        let to = store.edges_to_sym("ns", "sym:bar").unwrap();
+        assert_eq!(to.len(), 1);
+        assert_eq!(to[0].0, src_doc.document_id);
+        assert_eq!(to[0].1.dst_sym, "sym:bar");
+        assert_eq!(to[0].1.edge_kind, EdgeKind::Calls);
+
+        let resolved = store.resolve_dst_doc("ns", "sym:bar").unwrap();
+        assert!(
+            resolved.is_some(),
+            "sym:bar should resolve to bar.rs's doc_id"
+        );
+
+        let unresolved = store.resolve_dst_doc("ns", "sym:Baz").unwrap();
+        assert!(unresolved.is_none());
+    }
+
+    #[test]
+    fn sym_entities_for_doc_returns_only_sym_entities() {
+        let (store, _d) = temp_store();
+        let new = NewDoc {
+            key: "src/lib.rs".into(),
+            title: "lib".into(),
+            content: "fn foo() {}".into(),
+            author: "a".into(),
+            taint: Taint::Internal,
+            meta: None,
+        };
+        let doc = store
+            .commit_ingest(
+                "ns",
+                &new,
+                &["fn foo() {}".into()],
+                &[vec![1.0f32]],
+                &[vec![
+                    "sym:foo".into(),
+                    "sym:Bar".into(),
+                    "path:src/lib.rs".into(),
+                    "import:std".into(),
+                ]],
+                &[Some((1, 1))],
+                &[],
+                "sig",
+            )
+            .unwrap();
+        let mut syms = store.sym_entities_for_doc("ns", &doc.document_id).unwrap();
+        syms.sort();
+        assert_eq!(syms, vec!["sym:Bar".to_string(), "sym:foo".to_string()]);
+        // wrong namespace → empty
+        assert!(store
+            .sym_entities_for_doc("other", &doc.document_id)
             .unwrap()
             .is_empty());
     }
@@ -668,6 +938,7 @@ mod tests {
                 &[vec![1.0f32, 2.0]],
                 &[vec!["handle:bob".into()]],
                 &[None],
+                &[],
                 "sig",
             )
             .unwrap();
@@ -704,6 +975,8 @@ mod tests {
 
     #[test]
     fn delete_doc_by_key_removes_doc_and_chunks() {
+        use crate::model::{EdgeKind, RawEdge};
+
         let (store, _d) = temp_store();
         let new = NewDoc {
             key: "k".into(),
@@ -713,7 +986,28 @@ mod tests {
             taint: Taint::Internal,
             meta: None,
         };
-        let _doc = store
+        // Ingest a "callee" doc first so we can test dst_doc_id-side deletion too
+        let callee = store
+            .commit_ingest(
+                "alice",
+                &NewDoc {
+                    key: "callee.rs".into(),
+                    title: "callee.rs".into(),
+                    content: "fn target() {}".into(),
+                    author: "a".into(),
+                    taint: Taint::Internal,
+                    meta: None,
+                },
+                &["fn target() {}".into()],
+                &[vec![0.5f32]],
+                &[vec!["sym:target".into()]],
+                &[Some((1, 1))],
+                &[],
+                "sig",
+            )
+            .unwrap();
+
+        let doc = store
             .commit_ingest(
                 "alice",
                 &new,
@@ -721,21 +1015,84 @@ mod tests {
                 &[vec![1.0f32]],
                 &[vec!["handle:bob".into()]],
                 &[None],
+                &[RawEdge {
+                    dst_sym: "sym:target".into(),
+                    edge_kind: EdgeKind::Calls,
+                    src_line: Some(1),
+                    confidence: 1.0,
+                }],
                 "sig",
             )
             .unwrap();
+
+        // Manually insert an INBOUND ghost edge: callee.rs references the doc we are about to
+        // delete (dst_sym names one of its symbols) but with dst_doc_id NULL — exactly the
+        // state production creates (cross-file resolution is lazy and never writes dst_doc_id
+        // back). This edge must SURVIVE the delete (the dst_doc_id DELETE matches nothing), so
+        // it becomes an unresolvable ghost edge by design.
+        {
+            let conn = store.write.lock().unwrap();
+            conn.execute(
+                "INSERT INTO code_edges (namespace, src_doc_id, dst_sym, dst_doc_id, edge_kind, src_line, confidence)
+                 VALUES ('alice', ?1, 'sym:ping', NULL, 'CALLS', 5, 1.0)",
+                rusqlite::params![callee.document_id],
+            )
+            .unwrap();
+        }
+
         assert!(store.get_by_key("alice", "k").unwrap().is_some());
-        assert_eq!(store.chunks_for_namespace("alice", "sig").unwrap().len(), 1);
+        assert_eq!(store.chunks_for_namespace("alice", "sig").unwrap().len(), 2); // doc + callee
+
+        {
+            let conn = store.read.get().unwrap();
+            let src_count: i64 = conn
+                .query_row(
+                    "SELECT count(*) FROM code_edges WHERE namespace='alice' AND src_doc_id=?1",
+                    rusqlite::params![doc.document_id],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(src_count, 1, "should have 1 outbound edge before delete");
+        }
 
         let removed = store.delete_doc_by_key("alice", "k").unwrap();
         assert!(removed);
-        assert!(store.get_by_key("alice", "k").unwrap().is_none()); // doc gone
-        assert_eq!(store.chunks_for_namespace("alice", "sig").unwrap().len(), 0); // chunks gone
+        assert!(store.get_by_key("alice", "k").unwrap().is_none());
+        assert_eq!(store.chunks_for_namespace("alice", "sig").unwrap().len(), 1); // only callee remains
         assert!(store
             .docs_with_entities("alice", &["handle:bob".into()])
             .unwrap()
-            .is_empty()); // entities gone
-        assert!(!store.delete_doc_by_key("alice", "k").unwrap()); // idempotent: already gone
+            .is_empty());
+
+        {
+            let conn = store.read.get().unwrap();
+            let src_count: i64 = conn
+                .query_row(
+                    "SELECT count(*) FROM code_edges WHERE namespace='alice' AND src_doc_id=?1",
+                    rusqlite::params![doc.document_id],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(src_count, 0, "outbound edges must be deleted with the doc");
+
+            // The inbound NULL-dst_doc_id ghost edge from callee.rs SURVIVES: dst_doc_id is
+            // never written in production, so the dst_doc_id DELETE matches nothing and inbound
+            // references to a forgotten doc become unresolvable ghost edges by design.
+            let ghost_count: i64 = conn
+                .query_row(
+                    "SELECT count(*) FROM code_edges
+                     WHERE namespace='alice' AND src_doc_id=?1 AND dst_sym='sym:ping'",
+                    rusqlite::params![callee.document_id],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(
+                ghost_count, 1,
+                "inbound ghost edge (dst_doc_id NULL) survives deletion by design"
+            );
+        }
+
+        assert!(!store.delete_doc_by_key("alice", "k").unwrap());
     }
 
     #[test]
@@ -757,6 +1114,7 @@ mod tests {
                 &[vec![1.0f32, 0.0], vec![0.0f32, 1.0]],
                 &[vec![], vec![]],
                 &[Some((1, 2)), None],
+                &[],
                 "sig",
             )
             .unwrap();
@@ -848,6 +1206,7 @@ mod tests {
                 &[vec![1.0f32, 0.0]],
                 &[vec![]],
                 &[None],
+                &[],
                 "sig",
             )
             .unwrap();

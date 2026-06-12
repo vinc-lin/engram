@@ -152,7 +152,7 @@ fn is_boundary(lang: Lang, node: &tree_sitter::Node) -> bool {
 
 /// The defining identifier for a chunkable node. Uses the `name` field when present; for C/C++
 /// `function_definition` (whose name lives under `declarator`) it follows the declarator chain.
-fn symbol_name(lang: Lang, node: &tree_sitter::Node, src: &[u8]) -> Option<String> {
+pub(crate) fn symbol_name(lang: Lang, node: &tree_sitter::Node, src: &[u8]) -> Option<String> {
     if let Some(name) = node.child_by_field_name("name") {
         return name
             .utf8_text(src)
@@ -170,7 +170,7 @@ fn symbol_name(lang: Lang, node: &tree_sitter::Node, src: &[u8]) -> Option<Strin
 
 /// Follow a C/C++ declarator chain (`function_declarator` -> `pointer_declarator` -> ...) down to
 /// the function-name identifier.
-fn declarator_name(mut node: tree_sitter::Node, src: &[u8]) -> Option<String> {
+pub(crate) fn declarator_name(mut node: tree_sitter::Node, src: &[u8]) -> Option<String> {
     loop {
         if matches!(
             node.kind(),
@@ -186,7 +186,7 @@ fn declarator_name(mut node: tree_sitter::Node, src: &[u8]) -> Option<String> {
     }
 }
 
-fn parse(lang: Lang, content: &str) -> Option<tree_sitter::Tree> {
+pub(crate) fn parse(lang: Lang, content: &str) -> Option<tree_sitter::Tree> {
     let mut parser = Parser::new();
     parser.set_language(&language(lang)).ok()?;
     parser.parse(content, None)

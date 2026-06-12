@@ -272,6 +272,60 @@ pub fn code_graph() -> bool {
     })
 }
 
+/// Whether `ingest_document` should run `graph::extract_edges` on code-mode files and pass
+/// the resulting edges to `commit_ingest` for storage in `code_edges`. Cached read of
+/// `ENGRAM_CODE_GRAPH_EXTRACT` (default **false**). Only Rust and C/C++ edge extraction is
+/// implemented in v1; other languages produce an empty edge set regardless of this flag.
+/// Off by default to keep ingest cost identical to pre-graph builds until the feature is
+/// exercised. When on, `extract_edges` runs *before* the write lock (off-lock invariant
+/// preserved) and the edge slice is handed into the atomic `commit_ingest` transaction.
+pub fn code_graph_extract() -> bool {
+    use std::sync::OnceLock;
+    static CACHE: OnceLock<bool> = OnceLock::new();
+    *CACHE.get_or_init(|| {
+        std::env::var("ENGRAM_CODE_GRAPH_EXTRACT")
+            .ok()
+            .and_then(|s| match s.to_ascii_lowercase().as_str() {
+                "true" | "1" | "yes" | "on" => Some(true),
+                "false" | "0" | "no" | "off" => Some(false),
+                _ => None,
+            })
+            .unwrap_or(false)
+    })
+}
+
+/// Minimum confidence threshold for edges written to `code_edges`. Edges extracted by
+/// `graph::extract_edges` with `confidence < code_graph_min_confidence()` are silently
+/// dropped before `commit_ingest`. Cached read of `ENGRAM_CODE_GRAPH_MIN_CONFIDENCE`
+/// (default **0.6**). Values outside [0.0, 1.0] are ignored and the default applies.
+pub fn code_graph_min_confidence() -> f32 {
+    use std::sync::OnceLock;
+    static CACHE: OnceLock<f32> = OnceLock::new();
+    *CACHE.get_or_init(|| {
+        std::env::var("ENGRAM_CODE_GRAPH_MIN_CONFIDENCE")
+            .ok()
+            .and_then(|s| s.parse::<f32>().ok())
+            .filter(|v| v.is_finite() && (0.0..=1.0).contains(v))
+            .unwrap_or(0.6)
+    })
+}
+
+/// Maximum BFS depth for `graph_query::callers` and `graph_query::callees` traversals.
+/// Used as the process-global cap when the caller passes `None` or a value larger than this
+/// limit. Cached read of `ENGRAM_CODE_GRAPH_MAX_DEPTH` (default **4**). Values of 0 are
+/// clamped to 1 so a traversal always returns at least direct neighbours.
+pub fn code_graph_max_depth() -> usize {
+    use std::sync::OnceLock;
+    static CACHE: OnceLock<usize> = OnceLock::new();
+    *CACHE.get_or_init(|| {
+        std::env::var("ENGRAM_CODE_GRAPH_MAX_DEPTH")
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+            .map(|v| v.max(1))
+            .unwrap_or(4)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -332,5 +386,35 @@ mod tests {
         assert_eq!(c2.seal_fanout, 3);
         assert_eq!(c2.vault_dir.as_deref(), Some("/tmp/v"));
         assert!(c2.consolidate_code);
+    }
+
+    #[test]
+    fn code_graph_extract_defaults_false() {
+        let a = code_graph_extract();
+        let b = code_graph_extract();
+        assert_eq!(a, b);
+        if std::env::var("ENGRAM_CODE_GRAPH_EXTRACT").is_err() {
+            assert!(!a);
+        }
+    }
+
+    #[test]
+    fn code_graph_min_confidence_defaults_0_6() {
+        let a = code_graph_min_confidence();
+        let b = code_graph_min_confidence();
+        assert!((a - b).abs() < 1e-9);
+        if std::env::var("ENGRAM_CODE_GRAPH_MIN_CONFIDENCE").is_err() {
+            assert!((a - 0.6_f32).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn code_graph_max_depth_defaults_4() {
+        let a = code_graph_max_depth();
+        let b = code_graph_max_depth();
+        assert_eq!(a, b);
+        if std::env::var("ENGRAM_CODE_GRAPH_MAX_DEPTH").is_err() {
+            assert_eq!(a, 4_usize);
+        }
     }
 }

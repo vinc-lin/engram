@@ -1,11 +1,16 @@
 use crate::embed::Embedder;
 use crate::error::Result;
-use crate::model::{MemoryDoc, NewDoc};
+use crate::model::{MemoryDoc, NewDoc, RawEdge};
 use crate::store::Store;
 use regex::Regex;
 use std::sync::OnceLock;
 
-type IngestParts = (Vec<String>, Vec<Option<(i64, i64)>>, Vec<Vec<String>>);
+type IngestParts = (
+    Vec<String>,
+    Vec<Option<(i64, i64)>>,
+    Vec<Vec<String>>,
+    Vec<RawEdge>,
+);
 
 /// Max characters (not bytes) per chunk — CJK-safe.
 const MAX_CHUNK_CHARS: usize = 800;
@@ -292,7 +297,7 @@ pub fn ingest_document(
         .and_then(|k| k.as_str())
         == Some("file");
 
-    let (chunk_texts, line_ranges, entities): IngestParts = if is_code {
+    let (chunk_texts, line_ranges, entities, raw_edges): IngestParts = if is_code {
         // Phase 4: tree-sitter boundary chunking + AST symbols when the language is supported;
         // otherwise fall back to the heuristic symbol-split chunker.
         let lang = if crate::config::code_tree_sitter() {
@@ -325,12 +330,36 @@ pub fn ingest_document(
                 es
             })
             .collect();
-        (texts, ranges, ents)
+
+        // Build file-level symbol set (union of all sym: entities across chunks) and extract
+        // edges off-lock when the gate is on. extract_edges returns empty for non-Rust/C/C++.
+        let edges: Vec<RawEdge> = if crate::config::code_graph_extract() {
+            if let Some(l) = lang {
+                let file_syms: Vec<&str> = ents
+                    .iter()
+                    .flat_map(|chunk_ents| chunk_ents.iter())
+                    .filter(|e| e.starts_with("sym:"))
+                    .map(|e| e.strip_prefix("sym:").unwrap_or(e.as_str()))
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .into_iter()
+                    .collect();
+                let min_conf = crate::config::code_graph_min_confidence();
+                let mut extracted = crate::graph::extract_edges(&new.content, l, &file_syms);
+                extracted.retain(|e| e.confidence >= min_conf);
+                extracted
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        };
+
+        (texts, ranges, ents, edges)
     } else {
         let texts = chunk(&new.content);
         let ranges = vec![None; texts.len()];
         let ents: Vec<Vec<String>> = texts.iter().map(|t| extract_entities(t)).collect();
-        (texts, ranges, ents)
+        (texts, ranges, ents, Vec::new())
     };
 
     // Embed chunks off-lock in batches of EMBED_BATCH; skip any chunk whose embedding fails.
@@ -406,6 +435,7 @@ pub fn ingest_document(
         &kept_embeddings,
         &kept_entities,
         &kept_ranges,
+        &raw_edges,
         &sig,
     )
 }
@@ -939,5 +969,56 @@ mod tests {
             total - 1,
             rows.len()
         );
+    }
+
+    #[test]
+    fn ingest_code_doc_with_hand_built_edges_reaches_store() {
+        // Drives commit_ingest directly with a hand-built &[RawEdge] to confirm the wiring from
+        // ingest into the store works, without depending on the process-global gate.
+        use crate::embed::HashEmbedder;
+        use crate::model::{EdgeKind, NewDoc, RawEdge, Taint};
+        use crate::store::Store;
+
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(dir.path().join("t.db").to_str().unwrap()).unwrap();
+
+        let new = NewDoc {
+            key: "src/lib.rs".into(),
+            title: "lib.rs".into(),
+            content: "fn caller() { callee(); }".into(),
+            author: "code".into(),
+            taint: Taint::Internal,
+            meta: Some(serde_json::json!({"kind": "file"})),
+        };
+        let edges = vec![RawEdge {
+            dst_sym: "sym:callee".to_string(),
+            edge_kind: EdgeKind::Calls,
+            src_line: Some(1),
+            confidence: 0.95,
+        }];
+
+        let embedder = HashEmbedder::new(32);
+        let text = "fn caller() { callee(); }".to_string();
+        let emb = embedder.embed(&text).unwrap();
+
+        let doc = store
+            .commit_ingest(
+                "repo:test",
+                &new,
+                &[text],
+                &[emb],
+                &[vec!["sym:caller".to_string()]],
+                &[Some((1, 1))],
+                &edges,
+                &embedder.signature(),
+            )
+            .unwrap();
+
+        let from = store.edges_from("repo:test", &doc.document_id).unwrap();
+        assert_eq!(from.len(), 1);
+        assert_eq!(from[0].dst_sym, "sym:callee");
+        assert_eq!(from[0].edge_kind, EdgeKind::Calls);
+        assert_eq!(from[0].src_line, Some(1));
+        assert!((from[0].confidence - 0.95).abs() < 1e-5);
     }
 }

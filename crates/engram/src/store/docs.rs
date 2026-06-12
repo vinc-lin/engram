@@ -87,6 +87,22 @@ impl Store {
             "DELETE FROM chunk_entities WHERE namespace=?1 AND document_id=?2",
             params![namespace, doc_id],
         )?;
+        // Remove all code edges where this doc is the source (outbound references from the doc).
+        tx.execute(
+            "DELETE FROM code_edges WHERE namespace=?1 AND src_doc_id=?2",
+            params![namespace, doc_id],
+        )?;
+        // Future-proofing for an eager-resolution schema: remove edges whose resolved
+        // destination is this doc. TODAY dst_doc_id is ALWAYS NULL — cross-file resolution is
+        // lazy at query time and never written back — so this DELETE removes nothing in
+        // practice. Inbound references to a forgotten doc's symbols therefore survive as
+        // unresolvable "ghost" edges (callers/callees show the bare sym): a documented
+        // trade-off, not over-deleted via a dst_sym subquery (symbol-name collisions would
+        // over-delete).
+        tx.execute(
+            "DELETE FROM code_edges WHERE namespace=?1 AND dst_doc_id=?2",
+            params![namespace, doc_id],
+        )?;
         tx.execute(
             "DELETE FROM tree_nodes WHERE namespace=?1 AND doc_id=?2 AND level=0 AND sealed=0",
             params![namespace, doc_id],

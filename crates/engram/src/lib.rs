@@ -3,6 +3,8 @@ pub mod config;
 pub mod conventions;
 pub mod embed;
 pub mod error;
+pub mod graph;
+pub mod graph_query;
 pub mod ingest;
 pub mod jobs;
 pub mod llm;

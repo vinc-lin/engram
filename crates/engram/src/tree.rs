@@ -791,4 +791,169 @@ mod tests {
         assert_eq!(l1.len(), 1);
         assert_eq!(store.children_of(&l1[0].node_id).unwrap().len(), 2);
     }
+
+    /// Build a Config where gates trip on every leaf so the cascade is deep enough to observe
+    /// multi-level sealing within a small number of docs.
+    fn tiny_cfg() -> Config {
+        let mut c = Config::from_vars(|_| None);
+        c.seal_input_token_budget = 1; // every leaf immediately seals its L0 buffer
+        c.seal_fanout = 2; // every pair of L1 nodes seals into L2
+        c.seal_flush_age_secs = 1e15; // age gate never fires during the test
+        c
+    }
+
+    #[test]
+    fn integration_multi_doc_drain_tree_shape_and_reingest_invariants() {
+        use crate::ingest::ingest_document;
+        use crate::jobs::worker_tick;
+        use crate::model::{NewDoc, Taint};
+
+        let (store, _d) = temp();
+        let e = HashEmbedder::new(16);
+        let cfg = tiny_cfg();
+
+        let docs = [
+            ("k1", "First doc with handle @alice and url https://a.com"),
+            ("k2", "Second doc mentioning @bob and #rust"),
+            ("k3", "Third doc about @carol and email carol@example.com"),
+            ("k4", "Fourth doc referencing @dave and #cargo"),
+        ];
+        let ns = "integ";
+        for (key, content) in &docs {
+            let new = NewDoc {
+                key: (*key).into(),
+                title: (*key).into(),
+                content: (*content).into(),
+                author: "agentA".into(),
+                taint: Taint::Internal,
+                meta: None,
+            };
+            ingest_document(&store, &e, ns, &new).unwrap();
+        }
+        assert_eq!(store.pending_jobs().unwrap(), 4);
+
+        let proc = TreeProcessor {
+            embedder: std::sync::Arc::new(HashEmbedder::new(16)),
+            chat: std::sync::Arc::new(FakeChatClient::ok("SUMMARY")),
+            audit: std::sync::Arc::new(NullAuditSink),
+            cfg: cfg.clone(),
+            vault: None,
+        };
+
+        let mut ticks = 0usize;
+        while worker_tick(&store, &proc, 5).unwrap() {
+            ticks += 1;
+        }
+        assert_eq!(ticks, 4, "should process exactly 4 jobs");
+        assert_eq!(store.pending_jobs().unwrap(), 0);
+
+        let top_source = store.tree_top_nodes(ns, "source", "agentA").unwrap();
+        assert_eq!(
+            top_source.len(),
+            1,
+            "source tree must have converged to a single top node"
+        );
+        assert!(
+            top_source[0].level >= 2,
+            "cascade must have climbed at least to L2 (got L{})",
+            top_source[0].level
+        );
+        assert_eq!(
+            top_source[0].body, "SUMMARY",
+            "top node body must be the FakeChat reply"
+        );
+
+        let top_global = store.tree_top_nodes(ns, "global", "global").unwrap();
+        assert_eq!(top_global.len(), 1);
+        assert!(top_global[0].level >= 2);
+
+        for handle in ["handle:alice", "handle:bob", "handle:carol", "handle:dave"] {
+            let top = store.tree_top_nodes(ns, "topic", handle).unwrap();
+            assert_eq!(
+                top.len(),
+                1,
+                "topic tree for {handle} must have exactly one top node"
+            );
+            assert_eq!(top[0].level, 1, "single leaf → L1, no L2");
+        }
+
+        // Count sealed nodes across every tree this namespace built, using only public store
+        // methods (`store.read` is a private field, unreachable from this module). BFS down from
+        // each tree's top node via `children_of`; a node is `sealed` once a parent has folded it.
+        let trees: &[(&str, &str)] = &[
+            ("source", "agentA"),
+            ("global", "global"),
+            ("topic", "handle:alice"),
+            ("topic", "handle:bob"),
+            ("topic", "handle:carol"),
+            ("topic", "handle:dave"),
+            ("topic", "url:https://a.com"),
+            ("topic", "hashtag:rust"),
+            ("topic", "email:carol@example.com"),
+            ("topic", "hashtag:cargo"),
+        ];
+        let count_sealed = |store: &Store| -> i64 {
+            let mut sealed = 0i64;
+            for (kind, key) in trees {
+                let mut frontier = store.tree_top_nodes(ns, kind, key).unwrap();
+                while let Some(node) = frontier.pop() {
+                    if node.sealed {
+                        sealed += 1;
+                    }
+                    frontier.extend(store.children_of(&node.node_id).unwrap());
+                }
+            }
+            sealed
+        };
+        let sealed_before = count_sealed(&store);
+        assert!(sealed_before > 0, "there must be sealed nodes after drain");
+
+        let new_k1 = NewDoc {
+            key: "k1".into(),
+            title: "k1".into(),
+            content: "First doc with handle @alice and url https://a.com".into(),
+            author: "agentA".into(),
+            taint: Taint::Internal,
+            meta: None,
+        };
+        ingest_document(&store, &e, ns, &new_k1).unwrap();
+        assert_eq!(store.pending_jobs().unwrap(), 1);
+        while worker_tick(&store, &proc, 5).unwrap() {}
+
+        let sealed_after = count_sealed(&store);
+        assert!(
+            sealed_after >= sealed_before,
+            "sealed nodes must not decrease after re-ingest (before={sealed_before}, after={sealed_after})"
+        );
+
+        ingest_document(
+            &store,
+            &e,
+            ns,
+            &NewDoc {
+                key: "k5".into(),
+                title: "k5".into(),
+                content: "Fifth doc @eve".into(),
+                author: "agentA".into(),
+                taint: Taint::Internal,
+                meta: None,
+            },
+        )
+        .unwrap();
+        let claimed = store.claim_job().unwrap().unwrap();
+        assert_eq!(claimed.namespace, ns);
+        let requeued = store.requeue_running().unwrap();
+        assert_eq!(
+            requeued, 1,
+            "requeue_running must recover the orphaned running job"
+        );
+        assert_eq!(
+            store
+                .job(&format!("{ns}:{}", claimed.document_id))
+                .unwrap()
+                .unwrap()
+                .0,
+            "pending"
+        );
+    }
 }

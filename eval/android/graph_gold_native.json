@@ -1,0 +1,58 @@
+{
+  "_authoring_note": "Oracle-assisted authoring is required before human verification. Generate candidate edges with clangd callHierarchy/incomingCalls on a `cmake -DCMAKE_EXPORT_COMPILE_COMMANDS=ON` build, OR with GNU Global (`gtags` then `global -r <sym>`). Minimum human-verification bar: for each expected_caller, read the cited file and confirm the symbol appears in a *call expression* (not a comment, forward-declaration, or type-use); for each unexpected_caller, confirm the symbol is absent from any call site in that file. C/C++ numbers are measurement targets, not pass/fail gates for v1.",
+  "datasets": [
+    {
+      "namespace": "repo:ndk-samples",
+      "repo": "~/engram-eval/proxies/ndk-samples",
+      "oracle_notes": "Generated with clangd callHierarchy/incomingCalls on a cmake -DCMAKE_EXPORT_COMPILE_COMMANDS=ON build of camera/basic. Human-verified by reading call-site lines.",
+      "entries": [
+        { "kind": "callers", "query_sym": "ImageReader",
+          "note": "ImageReader ctor is called from CameraEngine::CreateCamera, not from android_main.",
+          "expected_callers": ["camera/basic/src/main/cpp/camera_engine.cpp"],
+          "unexpected_callers": ["camera/basic/src/main/cpp/android_main.cpp", "camera/basic/src/main/cpp/camera_ui.cpp"] },
+        { "kind": "callers", "query_sym": "NDKCamera",
+          "note": "NDKCamera ctor is called from CameraEngine::CreateCamera.",
+          "expected_callers": ["camera/basic/src/main/cpp/camera_engine.cpp"],
+          "unexpected_callers": ["camera/basic/src/main/cpp/android_main.cpp"] },
+        { "kind": "callees", "query_path": "camera/basic/src/main/cpp/camera_engine.cpp",
+          "note": "camera_engine.cpp defines CameraEngine, CreateCamera, DrawFrame, DeleteCamera.",
+          "expected_callees_contain": ["sym:CameraEngine", "sym:DrawFrame", "sym:CreateCamera", "sym:DeleteCamera"] },
+        { "kind": "callers", "query_sym": "CreateCamera",
+          "note": "CreateCamera is called from android_main as the entry point into the camera subsystem.",
+          "expected_callers": ["camera/basic/src/main/cpp/android_main.cpp"],
+          "unexpected_callers": ["camera/basic/src/main/cpp/camera_manager.cpp", "camera/basic/src/main/cpp/image_reader.cpp"] },
+        { "kind": "callees", "query_path": "camera/basic/src/main/cpp/camera_manager.cpp",
+          "note": "camera_manager.cpp defines NDKCamera, MatchCaptureSizeRequest, StartPreview, StopPreview.",
+          "expected_callees_contain": ["sym:NDKCamera", "sym:MatchCaptureSizeRequest", "sym:StartPreview", "sym:StopPreview"] }
+      ]
+    },
+    {
+      "namespace": "repo:libxcam",
+      "repo": "~/engram-eval/proxies/libxcam",
+      "oracle_notes": "Generated with GNU Global (gtags + global -r). Human-verified by reading reference lines.",
+      "entries": [
+        { "kind": "callers", "query_sym": "CLImageProcessor",
+          "note": "CLImageProcessor ctor is called from factory functions in cl_image_processor.cpp and pipeline setup.",
+          "expected_callers": ["modules/ocl/cl_image_processor.cpp"],
+          "unexpected_callers": ["xcore/xcam_common.cpp", "xcore/buffer_pool.cpp"] },
+        { "kind": "callees", "query_path": "modules/ocl/cl_image_processor.cpp",
+          "note": "cl_image_processor.cpp defines CLImageProcessor and its process_buffer, push_buffer methods.",
+          "expected_callees_contain": ["sym:CLImageProcessor", "sym:process_buffer", "sym:push_buffer"] }
+      ]
+    },
+    {
+      "namespace": "repo:gpuimage-plus",
+      "repo": "~/engram-eval/proxies/gpuimage-plus",
+      "oracle_notes": "Generated with clangd. Human-verified. .mm files fall back to the heuristic chunker; .cpp files parse with tree-sitter C++.",
+      "entries": [
+        { "kind": "callers", "query_sym": "GIPFilter",
+          "note": "GIPFilter ctor/factory is referenced from pipeline setup in GIPProgram or GIPFilterGroup.",
+          "expected_callers": ["source/GIPFilterGroup.cpp"],
+          "unexpected_callers": ["source/GIPContext.cpp"] },
+        { "kind": "callees", "query_path": "source/GIPProgram.cpp",
+          "note": "GIPProgram.cpp defines GIPProgram and render-related methods.",
+          "expected_callees_contain": ["sym:GIPProgram"] }
+      ]
+    }
+  ]
+}
